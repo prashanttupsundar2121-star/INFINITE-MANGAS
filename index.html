@@ -109,18 +109,28 @@
   <div id="toasts"></div><div id="loader"><div style="text-align:center"><div class="sp"></div><div style="font-family:'Cinzel Decorative',serif;margin-top:8px">INFINITE MANGAS</div></div></div>
   <script>
     (()=>{"use strict";
-      const BASE="https://api.mangadex.org",JIKAN="https://api.jikan.moe/v4",ANILIST="https://graphql.anilist.co",TTL=3e5;
-      const MD_HOST="api.mangadex.org",MD_CORS_PROXIES=[{name:"allorigins",build:u=>`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`},{name:"corsproxy",build:u=>`https://corsproxy.io/?${encodeURIComponent(u)}`},{name:"thingproxy",build:u=>`https://thingproxy.freeboard.io/fetch/${u}`}];
+      const BASE="https://api.mangadex.org",JIKAN="https://api.jikan.moe/v4",ANILIST="https://graphql.anilist.co";
+      const PROXIES=["https://corsproxy.io/?","https://api.allorigins.win/raw?url=","https://cors-anywhere.herokuapp.com/"];
       const L={en:"English",ja:"Japanese",ko:"Korean",zh:"Chinese (Simplified)","zh-hk":"Chinese (Traditional)",fr:"French",es:"Spanish",pt:"Portuguese",id:"Indonesian",ru:"Russian",ar:"Arabic",de:"German",it:"Italian",pl:"Polish",vi:"Vietnamese",tr:"Turkish",th:"Thai"};
       const G=["Action","Romance","Fantasy","Horror","Comedy","Slice of Life","Sci-Fi","Sports","Mystery","Isekai","Demons","School Life","Martial Arts","Historical","Psychological","Shounen","Shoujo","Seinen","Josei","Hentai"];
-      const S={lang:localStorage.getItem("im_lang")||"en",book:JSON.parse(localStorage.getItem("im_book")||"[]"),prog:JSON.parse(localStorage.getItem("im_prog")||"{}"),hero:[],q:Promise.resolve(),m:null,chs:[],ci:0,mode:"vertical",fit:"width"};
+      const S={lang:localStorage.getItem("im_lang")||"en",book:JSON.parse(localStorage.getItem("im_book")||"[]"),prog:JSON.parse(localStorage.getItem("im_prog")||"{}"),hero:[],m:null,chs:[],ci:0,mode:"vertical",fit:"width"};
       const $=(s,p=document)=>p.querySelector(s),$$=(s,p=document)=>[...p.querySelectorAll(s)],deb=(f,m=300)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>f(...a),m)}};
       const save=()=>{localStorage.setItem("im_lang",S.lang);localStorage.setItem("im_book",JSON.stringify(S.book));localStorage.setItem("im_prog",JSON.stringify(S.prog))},ok=id=>S.book.some(x=>x.id===id);
       const toast=t=>{const e=document.createElement("div");e.className="toast";e.textContent=t;$("#toasts").append(e);setTimeout(()=>e.remove(),2500)},loader=x=>$("#loader").classList.toggle("show",!!x);
       const tOf=m=>{const t=m?.attributes?.title||{};return t[S.lang]||t.en||t.ja||Object.values(t)[0]||"Untitled"},tags=(m,n=3)=>(m?.attributes?.tags||[]).map(x=>x?.attributes?.name?.en).filter(Boolean).slice(0,n),rOf=m=>Number(m?.attributes?.rating?.bayesian||m?.attributes?.rating?.average||0).toFixed(1),cOf=m=>{const r=(m.relationships||[]).find(x=>x.type==="cover_art"),f=r?.attributes?.fileName;return f?`https://uploads.mangadex.org/covers/${m.id}/${f}.512.jpg`:""},chL=c=>`Ch. ${c?.attributes?.chapter||"?"}`;
-      const get=k=>{const r=sessionStorage.getItem(k);if(!r)return null;try{const d=JSON.parse(r);if(Date.now()-d.t>TTL){sessionStorage.removeItem(k);return null}return d.v}catch{return null}},set=(k,v)=>sessionStorage.setItem(k,JSON.stringify({t:Date.now(),v}));
-      const isMD=u=>{try{return new URL(u).hostname===MD_HOST}catch{return false}},isNetworkOrCorsError=()=>true;
-      async function qf(url,opt={}){const k=`im:${url}:${JSON.stringify(opt)}`,c=get(k);if(c)return c;const rq=async u=>{const r=await fetch(u,{...opt,mode:"cors"});if(!r.ok)throw Error(r.status);return r.json()};try{const d=await rq(url);set(k,d);return d}catch(e){for(const p of MD_CORS_PROXIES){try{const d=await rq(p.build(url));set(k,d);return d}catch(px){}}throw Error("All fetch attempts failed for: "+url)}}
+      const CACHE={};
+      async function qf(url){
+        if(CACHE[url]&&Date.now()-CACHE[url].t<3e5)return CACHE[url].v;
+        const tryFetch=async(u)=>{
+          const ctrl=new AbortController();
+          const timer=setTimeout(()=>ctrl.abort(),12000);
+          try{const r=await fetch(u,{signal:ctrl.signal});clearTimeout(timer);if(!r.ok)throw Error(r.status);return await r.json()}
+          catch(e){clearTimeout(timer);throw e}
+        };
+        const urls=[url,...PROXIES.map(p=>p+encodeURIComponent(url))];
+        for(const u of urls){try{const d=await tryFetch(u);CACHE[url]={v:d,t:Date.now()};return d}catch(e){continue}}
+        throw Error("Failed to fetch: "+url);
+      }
       async function md(params){const u=new URL(BASE+"/manga");for(const [k,v] of Object.entries(params)){if(Array.isArray(v))v.forEach(x=>u.searchParams.append(`${k}[]`,x));else if(v!==""&&v!=null)u.searchParams.append(k,v)}u.searchParams.append("includes[]","cover_art");return qf(u.toString())}
       const sk=(el,n=8,row=false)=>{el.innerHTML="";for(let i=0;i<n;i++){const d=document.createElement("div");d.className="card skeleton";if(row)d.style.minWidth="164px";el.append(d)}};
       function card(m,{row=false,idx=0}={}){const c=document.createElement("article");c.className="card";c.style.animationDelay=`${Math.min(idx*45,500)}ms`;const pk=Object.keys(S.prog).find(k=>k.startsWith(m.id+":")),p=pk?S.prog[pk]:null,ts=tags(m,2);c.innerHTML=`${ts[0]?`<span class="badge bl">${ts[0]}</span>`:""}<span class="badge br">⭐ ${rOf(m)}</span><img loading="lazy" src="${cOf(m)}" alt=""><div class="shine"></div>${p?`<span class="cont">Continue P.${p.page+1}</span>`:""}<button class="bm">${ok(m.id)?"★":"☆"}</button><div class="cb"><h3 class="ct">${tOf(m)}</h3><p class="cs">${m.attributes?.status||"Unknown"} • ${chL(m.latestChapter||{})}</p></div>`;
