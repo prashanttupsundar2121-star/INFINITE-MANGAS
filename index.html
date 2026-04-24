@@ -157,13 +157,13 @@
       let requestLock=Promise.resolve();
       let lastRequestAt=0;
       async function pacedFetch(url,opts){
-        const schedule=requestLock.then(async()=>{
+        const pacingDelay=requestLock.then(async()=>{
           const wait=Math.max(0,REQUEST_GAP_MS-(Date.now()-lastRequestAt));
           if(wait)await new Promise(r=>setTimeout(r,wait));
           lastRequestAt=Date.now();
         });
-        requestLock=schedule.then(()=>{},()=>{});
-        await schedule;
+        requestLock=pacingDelay.then(()=>{},()=>{});
+        await pacingDelay;
         return fetch(url,opts);
       }
       async function qf(url){
@@ -229,10 +229,10 @@
           return null;
         }
       }
-      let homeRetryBound=false;
+      let hasHomeRetryListener=false;
       function bindHomeRetryButtons(){
-        if(homeRetryBound)return;
-        homeRetryBound=true;
+        if(hasHomeRetryListener)return;
+        hasHomeRetryListener=true;
         document.addEventListener("click",async e=>{
           const b=e.target.closest("[data-home-retry],[data-hero-retry]");
           if(!b)return;
