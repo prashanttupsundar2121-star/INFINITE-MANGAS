@@ -155,12 +155,14 @@
       const CACHE={};
       const REQUEST_GAP_MS=200;
       let requestLock=Promise.resolve();
-      let lastRequestAt=0;
+      let nextRequestAt=0;
       async function pacedFetch(url,opts){
         const run=requestLock.then(async()=>{
-          const wait=Math.max(0,REQUEST_GAP_MS-(Date.now()-lastRequestAt));
+          const now=Date.now();
+          const startAt=Math.max(now,nextRequestAt);
+          const wait=startAt-now;
           if(wait)await new Promise(r=>setTimeout(r,wait));
-          lastRequestAt=Date.now();
+          nextRequestAt=startAt+REQUEST_GAP_MS;
           return fetch(url,opts);
         });
         requestLock=run.then(()=>{},()=>{});
@@ -229,26 +231,22 @@
           return null;
         }
       }
+      let homeRetryBound=false;
       function bindHomeRetryButtons(){
-        $$("[data-home-retry]").forEach(b=>b.onclick=async()=>{
-          const s=getHomeSection(b.dataset.homeRetry);
+        if(homeRetryBound)return;
+        homeRetryBound=true;
+        document.addEventListener("click",async e=>{
+          const b=e.target.closest("[data-home-retry],[data-hero-retry]");
+          if(!b)return;
+          const id=b.dataset.homeRetry||b.dataset.heroRetry;
+          const s=getHomeSection(id);
           if(!s)return;
           const list=await loadHomeSection(s,{skeleton:true});
-          bindHomeRetryButtons();
           if(s.id==="trending"){
             if(list?.length){S.hero=list.slice(0,5);renderHero()}
             else renderHeroRetry();
           }
         });
-        const hb=$("[data-hero-retry]");
-        if(hb)hb.onclick=async()=>{
-          const s=getHomeSection(hb.dataset.heroRetry);
-          if(!s)return;
-          const list=await loadHomeSection(s,{skeleton:true});
-          bindHomeRetryButtons();
-          if(list?.length){S.hero=list.slice(0,5);renderHero()}
-          else renderHeroRetry();
-        };
       }
       async function loadHome(){
         HOME_SECTIONS.forEach(s=>sk($(s.sel),s.n,s.row));
