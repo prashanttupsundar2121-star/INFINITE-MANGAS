@@ -155,13 +155,12 @@
       const CACHE={};
       const REQUEST_GAP_MS=200;
       let requestLock=Promise.resolve();
-      let nextRequestAt=0;
+      let lastRequestAt=0;
       async function pacedFetch(url,opts){
         const schedule=requestLock.then(async()=>{
-          const now=Date.now();
-          const wait=Math.max(0,nextRequestAt-now);
-          nextRequestAt=Math.max(nextRequestAt,now)+REQUEST_GAP_MS;
+          const wait=Math.max(0,REQUEST_GAP_MS-(Date.now()-lastRequestAt));
           if(wait)await new Promise(r=>setTimeout(r,wait));
+          lastRequestAt=Date.now();
         });
         requestLock=schedule.then(()=>{},()=>{});
         await schedule;
@@ -240,7 +239,7 @@
           const id=b.dataset.homeRetry||b.dataset.heroRetry;
           const s=getHomeSection(id);
           if(!s)return;
-          const list=await loadHomeSection(s,{skeleton:true});
+          const list=await loadHomeSection(s,{skeleton:!b.dataset.heroRetry});
           if(s.id==="trending"){
             if(list?.length){S.hero=list.slice(0,5);renderHero()}
             else renderHeroError();
@@ -249,12 +248,13 @@
       }
       async function loadHome(){
         HOME_SECTIONS.forEach(s=>sk($(s.sel),s.n,s.row));
-        const rs=await Promise.all(HOME_SECTIONS.map(s=>loadHomeSection(s,{skeleton:false})));
-        const tr=rs[0]||[];
+        const rs=await Promise.allSettled(HOME_SECTIONS.map(s=>loadHomeSection(s,{skeleton:false})));
+        const lists=rs.map(r=>r.status==="fulfilled"?r.value:null);
+        const tr=lists[0]||[];
         if(tr.length){S.hero=tr.slice(0,5);renderHero()}
         else renderHeroError();
         bindHomeRetryButtons();
-        if(rs.some(x=>!x))toast("Some sections failed");
+        if(lists.some(x=>!x))toast("Some sections failed");
       }
       async function byGenre(g){
         $$(".pill").forEach(p=>p.classList.toggle("active",p.dataset.g===g));
