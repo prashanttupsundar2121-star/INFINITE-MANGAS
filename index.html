@@ -153,12 +153,25 @@
       }
 
       const CACHE={};
+      const REQUEST_GAP_MS=200;
+      let requestLock=Promise.resolve();
+      let lastRequestAt=0;
+      async function pacedFetch(url,opts){
+        const pacingDelay=requestLock.then(async()=>{
+          const wait=Math.max(0,REQUEST_GAP_MS-(Date.now()-lastRequestAt));
+          if(wait)await new Promise(r=>setTimeout(r,wait));
+          lastRequestAt=Date.now();
+        });
+        requestLock=pacingDelay.then(()=>{},()=>{});
+        await pacingDelay;
+        return fetch(url,opts);
+      }
       async function qf(url){
         if(CACHE[url]&&Date.now()-CACHE[url].t<3e5)return CACHE[url].v;
         const ctrl=new AbortController();
         const timer=setTimeout(()=>ctrl.abort(),15000);
         try{
-          const r=await fetch(url,{signal:ctrl.signal,headers:{"Accept":"application/json"}});
+          const r=await pacedFetch(url,{signal:ctrl.signal,headers:{"Accept":"application/json"}});
           clearTimeout(timer);
           if(!r.ok)throw Error(r.status);
           const d=await r.json();
@@ -189,33 +202,60 @@
       function renderHero(){const h=$("#hero"),d=$("#dots");$$(".hs",h).forEach(x=>x.remove());d.innerHTML="";S.hero.forEach((m,i)=>{const s=document.createElement("article");s.className="hs"+(i===0?" active":"");s.style.backgroundImage=`url('${cOf(m)}')`;s.innerHTML=`<div class="hc"><h3 class="ht">${tOf(m)}</h3><div class="tags">${tags(m,3).map(t=>`<span class="tag">${t}</span>`).join("")}</div><p class="muted" style="margin:0 0 8px">${"⭐".repeat(Math.max(1,Math.round((+rOf(m)||5)/2)))} (${rOf(m)})</p><button class="cta">Read Now</button></div>`;s.querySelector(".cta").onclick=()=>openDetail(m);h.append(s);const b=document.createElement("button");b.className="dot"+(i===0?" active":"");b.onclick=()=>setHero(i);d.append(b)});
         h.onmousemove=e=>{const a=$(".hs.active",h);if(!a)return;const r=h.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;a.style.transform=`perspective(1000px) rotateX(${(0.5-y)*5}deg) rotateY(${(x-0.5)*7}deg)`};h.onmouseleave=()=>{const a=$(".hs.active",h);if(a)a.style.transform=""};clearInterval(ht);ht=setInterval(()=>setHero((hi+1)%S.hero.length),5000)}
       const setHero=i=>{hi=i;$$(".hs").forEach((s,x)=>s.classList.toggle("active",x===i));$$(".dot").forEach((b,x)=>b.classList.toggle("active",x===i))};
-      async function loadHome(){
-        const sections=[
-          {id:"trending",sel:"#trending",n:6,row:true, req:ck({sort:"follow",limit:12,lang:"en"})},
-          {id:"updated", sel:"#updated", n:6,row:true, req:ck({sort:"uploaded",limit:12,lang:"en"})},
-          {id:"new",     sel:"#new",     n:6,row:true, req:ck({sort:"created",limit:12,lang:"en"})},
-          {id:"jp",      sel:"#jp",      n:8,row:false,req:ck({country:"jp",sort:"follow",limit:16,lang:"en"})},
-          {id:"kr",      sel:"#kr",      n:8,row:false,req:ck({country:"kr",sort:"follow",limit:16,lang:"en"})},
-          {id:"cn",      sel:"#cn",      n:8,row:false,req:ck({country:"cn",sort:"follow",limit:16,lang:"en"})},
-          {id:"top",     sel:"#top",     n:8,row:false,req:ck({sort:"rating",limit:20,lang:"en"})}
-        ];
-        sections.forEach(s=>sk($(s.sel),s.n,s.row));
-        const rs=await Promise.allSettled(sections.map(s=>s.req));
-        let tr=[];let failed=0;
-        rs.forEach((r,i)=>{
-          const s=sections[i],el=$(s.sel);
-          if(r.status==="fulfilled"&&r.value?.data?.length){
-            fill(el,r.value.data,s.row);
-            if(s.id==="trending")tr=r.value.data;
-          }else{
-            failed++;
-            el.innerHTML=`<div class="empty">Failed to load. <button data-r>Retry</button></div>`;
+      const HOME_SECTIONS=[
+        {id:"trending",sel:"#trending",n:6,row:true,params:{sort:"follow",limit:12,lang:"en"}},
+        {id:"updated", sel:"#updated", n:6,row:true,params:{sort:"uploaded",limit:12,lang:"en"}},
+        {id:"new",     sel:"#new",     n:6,row:true,params:{sort:"created",limit:12,lang:"en"}},
+        {id:"jp",      sel:"#jp",      n:8,row:false,params:{country:"jp",sort:"follow",limit:16,lang:"en"}},
+        {id:"kr",      sel:"#kr",      n:8,row:false,params:{country:"kr",sort:"follow",limit:16,lang:"en"}},
+        {id:"cn",      sel:"#cn",      n:8,row:false,params:{country:"cn",sort:"follow",limit:16,lang:"en"}},
+        {id:"top",     sel:"#top",     n:8,row:false,params:{sort:"rating",limit:20,lang:"en"}}
+      ];
+      const getHomeSection=id=>HOME_SECTIONS.find(s=>s.id===id);
+      const renderSectionError=s=>{$(s.sel).innerHTML=`<div class="empty">Failed to load. <button data-home-retry="${s.id}">Retry</button></div>`};
+      const renderHeroError=()=>{$("#hero").innerHTML='<div class="empty">Failed to load spotlight. <button data-hero-retry="trending">Retry</button></div>'};
+      async function loadHomeSection(s,{skeleton=true}={}){
+        const el=$(s.sel);
+        if(!el)return null;
+        if(skeleton)sk(el,s.n,s.row);
+        try{
+          const d=await ck(s.params);
+          const list=d?.data||[];
+          if(!list.length)throw Error("No data");
+          fill(el,list,s.row);
+          return list;
+        }catch{
+          renderSectionError(s);
+          return null;
+        }
+      }
+      let isHomeRetryListenerBound=false;
+      function bindHomeRetryButtons(){
+        if(isHomeRetryListenerBound)return;
+        isHomeRetryListenerBound=true;
+        $("#home").addEventListener("click",async e=>{
+          const b=e.target.closest("[data-home-retry],[data-hero-retry]");
+          if(!b)return;
+          const id=b.dataset.homeRetry||b.dataset.heroRetry;
+          const s=getHomeSection(id);
+          if(!s)return;
+          const isHeroRetry=Boolean(b.dataset.heroRetry);
+          const list=await loadHomeSection(s,{skeleton:!isHeroRetry});
+          if(s.id==="trending"){
+            if(list?.length){S.hero=list.slice(0,5);renderHero()}
+            else renderHeroError();
           }
         });
+      }
+      async function loadHome(){
+        HOME_SECTIONS.forEach(s=>sk($(s.sel),s.n,s.row));
+        const rs=await Promise.allSettled(HOME_SECTIONS.map(s=>loadHomeSection(s,{skeleton:false})));
+        const lists=rs.map(r=>r.status==="fulfilled"?r.value:null);
+        const tr=lists[0]||[];
         if(tr.length){S.hero=tr.slice(0,5);renderHero()}
-        else{$("#hero").innerHTML='<div class="empty">Failed to load spotlight. <button data-r>Retry</button></div>'}
-        $$("[data-r]").forEach(b=>b.onclick=loadHome);
-        if(failed)toast("Some sections failed");
+        else renderHeroError();
+        bindHomeRetryButtons();
+        if(lists.some(x=>!x))toast("Some sections failed");
       }
       async function byGenre(g){
         $$(".pill").forEach(p=>p.classList.toggle("active",p.dataset.g===g));
