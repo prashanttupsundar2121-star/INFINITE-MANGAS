@@ -157,16 +157,15 @@
       let requestLock=Promise.resolve();
       let nextRequestAt=0;
       async function pacedFetch(url,opts){
-        const run=requestLock.then(async()=>{
+        const schedule=requestLock.then(async()=>{
           const now=Date.now();
-          const startAt=Math.max(now,nextRequestAt);
-          const wait=startAt-now;
+          const wait=Math.max(0,nextRequestAt-now);
+          nextRequestAt=Math.max(nextRequestAt,now)+REQUEST_GAP_MS;
           if(wait)await new Promise(r=>setTimeout(r,wait));
-          nextRequestAt=startAt+REQUEST_GAP_MS;
-          return fetch(url,opts);
         });
-        requestLock=run.then(()=>{},()=>{});
-        return run;
+        requestLock=schedule.then(()=>{},()=>{});
+        await schedule;
+        return fetch(url,opts);
       }
       async function qf(url){
         if(CACHE[url]&&Date.now()-CACHE[url].t<3e5)return CACHE[url].v;
@@ -214,8 +213,8 @@
         {id:"top",     sel:"#top",     n:8,row:false,params:{sort:"rating",limit:20,lang:"en"}}
       ];
       const getHomeSection=id=>HOME_SECTIONS.find(s=>s.id===id);
-      const renderSectionRetry=s=>{$(s.sel).innerHTML=`<div class="empty">Failed to load. <button data-home-retry="${s.id}">Retry</button></div>`};
-      const renderHeroRetry=()=>{$("#hero").innerHTML='<div class="empty">Failed to load spotlight. <button data-hero-retry="trending">Retry</button></div>'};
+      const renderSectionError=s=>{$(s.sel).innerHTML=`<div class="empty">Failed to load. <button data-home-retry="${s.id}">Retry</button></div>`};
+      const renderHeroError=()=>{$("#hero").innerHTML='<div class="empty">Failed to load spotlight. <button data-hero-retry="trending">Retry</button></div>'};
       async function loadHomeSection(s,{skeleton=true}={}){
         const el=$(s.sel);
         if(!el)return null;
@@ -227,7 +226,7 @@
           fill(el,list,s.row);
           return list;
         }catch{
-          renderSectionRetry(s);
+          renderSectionError(s);
           return null;
         }
       }
@@ -244,7 +243,7 @@
           const list=await loadHomeSection(s,{skeleton:true});
           if(s.id==="trending"){
             if(list?.length){S.hero=list.slice(0,5);renderHero()}
-            else renderHeroRetry();
+            else renderHeroError();
           }
         });
       }
@@ -253,7 +252,7 @@
         const rs=await Promise.all(HOME_SECTIONS.map(s=>loadHomeSection(s,{skeleton:false})));
         const tr=rs[0]||[];
         if(tr.length){S.hero=tr.slice(0,5);renderHero()}
-        else renderHeroRetry();
+        else renderHeroError();
         bindHomeRetryButtons();
         if(rs.some(x=>!x))toast("Some sections failed");
       }
