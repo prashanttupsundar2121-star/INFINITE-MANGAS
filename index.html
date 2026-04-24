@@ -109,29 +109,77 @@
   <div id="toasts"></div><div id="loader"><div style="text-align:center"><div class="sp"></div><div style="font-family:'Cinzel Decorative',serif;margin-top:8px">INFINITE MANGAS</div></div></div>
   <script>
     (()=>{"use strict";
-      const BASE="https://api.mangadex.org",JIKAN="https://api.jikan.moe/v4",ANILIST="https://graphql.anilist.co";
-      const PROXIES=["https://corsproxy.io/?","https://api.allorigins.win/raw?url=","https://cors-anywhere.herokuapp.com/"];
+      // ✅ ComicK API — Native CORS, no proxy needed!
+      const CK="https://api.comick.io";
       const L={en:"English",ja:"Japanese",ko:"Korean",zh:"Chinese (Simplified)","zh-hk":"Chinese (Traditional)",fr:"French",es:"Spanish",pt:"Portuguese",id:"Indonesian",ru:"Russian",ar:"Arabic",de:"German",it:"Italian",pl:"Polish",vi:"Vietnamese",tr:"Turkish",th:"Thai"};
       const G=["Action","Romance","Fantasy","Horror","Comedy","Slice of Life","Sci-Fi","Sports","Mystery","Isekai","Demons","School Life","Martial Arts","Historical","Psychological","Shounen","Shoujo","Seinen","Josei","Hentai"];
       const S={lang:localStorage.getItem("im_lang")||"en",book:JSON.parse(localStorage.getItem("im_book")||"[]"),prog:JSON.parse(localStorage.getItem("im_prog")||"{}"),hero:[],m:null,chs:[],ci:0,mode:"vertical",fit:"width"};
       const $=(s,p=document)=>p.querySelector(s),$$=(s,p=document)=>[...p.querySelectorAll(s)],deb=(f,m=300)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>f(...a),m)}};
       const save=()=>{localStorage.setItem("im_lang",S.lang);localStorage.setItem("im_book",JSON.stringify(S.book));localStorage.setItem("im_prog",JSON.stringify(S.prog))},ok=id=>S.book.some(x=>x.id===id);
       const toast=t=>{const e=document.createElement("div");e.className="toast";e.textContent=t;$("#toasts").append(e);setTimeout(()=>e.remove(),2500)},loader=x=>$("#loader").classList.toggle("show",!!x);
-      const tOf=m=>{const t=m?.attributes?.title||{};return t[S.lang]||t.en||t.ja||Object.values(t)[0]||"Untitled"},tags=(m,n=3)=>(m?.attributes?.tags||[]).map(x=>x?.attributes?.name?.en).filter(Boolean).slice(0,n),rOf=m=>Number(m?.attributes?.rating?.bayesian||m?.attributes?.rating?.average||0).toFixed(1),cOf=m=>{const r=(m.relationships||[]).find(x=>x.type==="cover_art"),f=r?.attributes?.fileName;return f?`https://uploads.mangadex.org/covers/${m.id}/${f}.512.jpg`:""},chL=c=>`Ch. ${c?.attributes?.chapter||"?"}`;
+      // Data extractors for ComicK format
+      const tOf=m=>m?.title||m?.slug||"Untitled";
+      const tags=(m,n=3)=>(m?.genres||[]).map(g=>g?.name||g).filter(Boolean).slice(0,n);
+      const rOf=m=>Number(m?.bayesian_rating||m?.rating||0).toFixed(1);
+      const cOf=m=>{const b=m?.md_covers?.[0]?.b2key||m?.cover_b2key;return b?`https://meo.comick.pictures/${b}`:""};
+      const chL=c=>`Ch. ${c?.attributes?.chapter||"?"}`;
+
+      // Normalize ComicK comic to internal format
+      function norm(item){
+        if(!item)return null;
+        const statusMap={1:"Ongoing",2:"Completed",3:"Cancelled",4:"Hiatus"};
+        return {
+          id:item.slug||item.hid||String(item.id||""),
+          slug:item.slug,hid:item.hid,
+          title:item.title||item.slug,
+          md_covers:item.md_covers||[],
+          cover_b2key:item.md_covers?.[0]?.b2key||"",
+          genres:item.genres||[],
+          bayesian_rating:item.bayesian_rating||item.rating||"0",
+          attributes:{
+            status:statusMap[item.status]||"Unknown",
+            title:{en:item.title||item.slug||""},
+            tags:(item.genres||[]).map(g=>({attributes:{name:{en:g?.name||g||""}}})),
+            rating:{bayesian:item.bayesian_rating||"0"},
+            description:{en:item.desc||item.mu_comics?.description||"No synopsis available."},
+            altTitles:item.mu_comics?.title?[{en:item.mu_comics.title}]:[]
+          },
+          relationships:[
+            ...(item.authors||[]).map(a=>({type:"author",attributes:{name:a.name||a}})),
+            ...(item.artists||[]).map(a=>({type:"artist",attributes:{name:a.name||a}}))
+          ],
+          latestChapter:{attributes:{chapter:item.last_chapter||"?"}}
+        };
+      }
+
       const CACHE={};
       async function qf(url){
         if(CACHE[url]&&Date.now()-CACHE[url].t<3e5)return CACHE[url].v;
-        const tryFetch=async(u)=>{
-          const ctrl=new AbortController();
-          const timer=setTimeout(()=>ctrl.abort(),12000);
-          try{const r=await fetch(u,{signal:ctrl.signal});clearTimeout(timer);if(!r.ok)throw Error(r.status);return await r.json()}
-          catch(e){clearTimeout(timer);throw e}
-        };
-        const urls=[url,...PROXIES.map(p=>p+encodeURIComponent(url))];
-        for(const u of urls){try{const d=await tryFetch(u);CACHE[url]={v:d,t:Date.now()};return d}catch(e){continue}}
-        throw Error("Failed to fetch: "+url);
+        const ctrl=new AbortController();
+        const timer=setTimeout(()=>ctrl.abort(),15000);
+        try{
+          const r=await fetch(url,{signal:ctrl.signal,headers:{"Accept":"application/json"}});
+          clearTimeout(timer);
+          if(!r.ok)throw Error(r.status);
+          const d=await r.json();
+          CACHE[url]={v:d,t:Date.now()};
+          return d;
+        }catch(e){clearTimeout(timer);throw e}
       }
-      async function md(params){const u=new URL(BASE+"/manga");for(const [k,v] of Object.entries(params)){if(Array.isArray(v))v.forEach(x=>u.searchParams.append(`${k}[]`,x));else if(v!==""&&v!=null)u.searchParams.append(k,v)}u.searchParams.append("includes[]","cover_art");return qf(u.toString())}
+
+      // Fetch comics list from ComicK
+      async function ck(params={}){
+        const u=new URL(`${CK}/v1.0/comics`);
+        u.searchParams.set("limit",params.limit||20);
+        if(params.q)u.searchParams.set("q",params.q);
+        if(params.sort)u.searchParams.set("sort",params.sort);
+        if(params.country)u.searchParams.set("country",params.country);
+        if(params.genre)u.searchParams.set("genre",params.genre);
+        if(params.lang)u.searchParams.set("lang",params.lang||"en");
+        u.searchParams.set("tachiyomi","true");
+        const res=await qf(u.toString());
+        return {data:(Array.isArray(res)?res:(res?.comics||[])).map(norm).filter(Boolean)};
+      }
       const sk=(el,n=8,row=false)=>{el.innerHTML="";for(let i=0;i<n;i++){const d=document.createElement("div");d.className="card skeleton";if(row)d.style.minWidth="164px";el.append(d)}};
       function card(m,{row=false,idx=0}={}){const c=document.createElement("article");c.className="card";c.style.animationDelay=`${Math.min(idx*45,500)}ms`;const pk=Object.keys(S.prog).find(k=>k.startsWith(m.id+":")),p=pk?S.prog[pk]:null,ts=tags(m,2);c.innerHTML=`${ts[0]?`<span class="badge bl">${ts[0]}</span>`:""}<span class="badge br">⭐ ${rOf(m)}</span><img loading="lazy" src="${cOf(m)}" alt=""><div class="shine"></div>${p?`<span class="cont">Continue P.${p.page+1}</span>`:""}<button class="bm">${ok(m.id)?"★":"☆"}</button><div class="cb"><h3 class="ct">${tOf(m)}</h3><p class="cs">${m.attributes?.status||"Unknown"} • ${chL(m.latestChapter||{})}</p></div>`;
         c.querySelector(".bm").onclick=e=>{e.stopPropagation();if(ok(m.id)){S.book=S.book.filter(b=>b.id!==m.id);toast("Removed from Library")}else{S.book.unshift({id:m.id,data:m,addedAt:Date.now()});toast("Added to Library")}save();c.querySelector(".bm").textContent=ok(m.id)?"★":"☆"};
@@ -141,18 +189,149 @@
       function renderHero(){const h=$("#hero"),d=$("#dots");$$(".hs",h).forEach(x=>x.remove());d.innerHTML="";S.hero.forEach((m,i)=>{const s=document.createElement("article");s.className="hs"+(i===0?" active":"");s.style.backgroundImage=`url('${cOf(m)}')`;s.innerHTML=`<div class="hc"><h3 class="ht">${tOf(m)}</h3><div class="tags">${tags(m,3).map(t=>`<span class="tag">${t}</span>`).join("")}</div><p class="muted" style="margin:0 0 8px">${"⭐".repeat(Math.max(1,Math.round((+rOf(m)||5)/2)))} (${rOf(m)})</p><button class="cta">Read Now</button></div>`;s.querySelector(".cta").onclick=()=>openDetail(m);h.append(s);const b=document.createElement("button");b.className="dot"+(i===0?" active":"");b.onclick=()=>setHero(i);d.append(b)});
         h.onmousemove=e=>{const a=$(".hs.active",h);if(!a)return;const r=h.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;a.style.transform=`perspective(1000px) rotateX(${(0.5-y)*5}deg) rotateY(${(x-0.5)*7}deg)`};h.onmouseleave=()=>{const a=$(".hs.active",h);if(a)a.style.transform=""};clearInterval(ht);ht=setInterval(()=>setHero((hi+1)%S.hero.length),5000)}
       const setHero=i=>{hi=i;$$(".hs").forEach((s,x)=>s.classList.toggle("active",x===i));$$(".dot").forEach((b,x)=>b.classList.toggle("active",x===i))};
-      async function loadHome(){const sections=[{id:"trending",name:"Trending",sel:"#trending",n:6,row:true,req:md({limit:10,"order[followedCount]":"desc",availableTranslatedLanguage:[S.lang,"en"]})},{id:"updated",name:"Recently updated",sel:"#updated",n:6,row:true,req:md({limit:10,"order[latestUploadedChapter]":"desc",availableTranslatedLanguage:[S.lang,"en"]})},{id:"new",name:"New releases",sel:"#new",n:6,row:true,req:md({limit:10,"order[createdAt]":"desc",availableTranslatedLanguage:[S.lang,"en"]})},{id:"jp",name:"Popular in Japan",sel:"#jp",n:8,row:false,req:md({limit:12,originalLanguage:["ja"],"order[followedCount]":"desc",availableTranslatedLanguage:[S.lang,"en"]})},{id:"kr",name:"Popular Manhwa",sel:"#kr",n:8,row:false,req:md({limit:12,originalLanguage:["ko"],"order[followedCount]":"desc",availableTranslatedLanguage:[S.lang,"en"]})},{id:"cn",name:"Popular Manhua",sel:"#cn",n:8,row:false,req:md({limit:12,originalLanguage:["zh","zh-hk"],"order[followedCount]":"desc",availableTranslatedLanguage:[S.lang,"en"]})},{id:"top",name:"Top picks",sel:"#top",n:8,row:false,req:md({limit:15,"order[followedCount]":"desc",availableTranslatedLanguage:[S.lang,"en"]})}];sections.forEach(s=>sk($(s.sel),s.n,s.row));const rs=await Promise.allSettled(sections.map(s=>s.req));let tr=[];let failed=0;rs.forEach((r,i)=>{const s=sections[i],el=$(s.sel);if(r.status==="fulfilled"){const data=r.value?.data||[];fill(el,data,s.row);if(s.id==="trending")tr=data}else{failed++;el.innerHTML=`<div class="empty">Failed to load ${s.name}. <button data-r>Retry</button></div>`}});if(tr.length){S.hero=tr.slice(0,5);renderHero()}else{$("#hero").innerHTML='<div class="empty">Failed to load spotlight. <button data-r>Retry</button></div>'}$$("[data-r]").forEach(b=>b.onclick=loadHome);if(failed)toast("Some sections failed to load")}
-      async function byGenre(g){$$(".pill").forEach(p=>p.classList.toggle("active",p.dataset.g===g));loader(1);try{const d=await md({title:g,limit:15,"order[followedCount]":"desc",availableTranslatedLanguage:[S.lang,"en"]});fill($("#top"),d.data);toast(`Filtered: ${g}`)}catch{toast("Genre filter failed")}loader(0)}
-      async function search(q,target=$("#searchResults"),o={}){if(!q?.trim()){target.innerHTML='<div class="empty">Type a title to begin searching.</div>';return}sk(target,8,false);try{const p={title:q,limit:24,availableTranslatedLanguage:[o.lang||S.lang,"en"]};if(o.status)p.status=[o.status];if(o.sort==="rating")p["order[followedCount]"]="desc";if(o.sort==="follows")p["order[followedCount]"]="desc";if(o.sort==="latest")p["order[latestUploadedChapter]"]="desc";const r=await md(p),l=r.data||[];if(!l.length){target.innerHTML='<div class="empty"><svg width="120" height="120" viewBox="0 0 120 120"><circle cx="60" cy="60" r="44" fill="#1d1d2a"/><circle cx="44" cy="54" r="5" fill="#fff"/><circle cx="76" cy="54" r="5" fill="#fff"/><path d="M40 82 Q60 70 80 82" stroke="#fff" stroke-width="4" fill="none"/></svg><p>No results found.</p></div>';return}fill(target,l)}catch{target.innerHTML='<div class="empty">Search failed. <button id="srr">Retry</button></div>';$("#srr")?.addEventListener("click",()=>search(q,target,o))}}
-      async function enrichJ(t){if(!t)return null;try{const d=await qf(`${JIKAN}/manga?q=${encodeURIComponent(t)}&limit=1`);return d?.data?.[0]||null}catch{return null}}
-      async function enrichA(t){if(!t)return null;try{const r=await fetch(ANILIST,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:"query($s:String){Media(search:$s,type:MANGA){averageScore description(asHtml:false) status}}",variables:{s:t}})});if(!r.ok)return null;const d=await r.json();return d?.data?.Media||null}catch{return null}}
-      async function openDetail(m){S.m=m;loader(1);try{const [f,j,a]=await Promise.all([qf(`${BASE}/manga/${m.id}/feed?limit=100&translatedLanguage[]=${S.lang}&translatedLanguage[]=en&order[chapter]=desc`),enrichJ(tOf(m)),enrichA(tOf(m))]);S.chs=f?.data||[];const rel=m.relationships||[],author=rel.find(x=>x.type==="author")?.attributes?.name||"Unknown",artist=rel.find(x=>x.type==="artist")?.attributes?.name||"Unknown",st=(m.attributes?.status||"unknown").toLowerCase(),sc=st.includes("ongo")?"ongo":st.includes("com")?"comp":"hia",alt=Object.values(m.attributes?.altTitles?.[0]||{})[0]||"-",av=[...new Set(S.chs.map(c=>c.attributes?.translatedLanguage).filter(Boolean))];
-          $("#mbg").style.backgroundImage=`url('${cOf(m)}')`;$("#mc").innerHTML=`<div style="display:flex;justify-content:space-between;position:sticky;top:0;z-index:2;padding-bottom:8px;background:linear-gradient(180deg,rgba(8,8,12,.96),rgba(8,8,12,.35))"><button class="x" id="cm">✕</button><button class="cta" id="bd">${ok(m.id)?"★ Bookmarked":"☆ Bookmark"}</button></div><div class="dw"><img class="dc" src="${cOf(m)}" loading="lazy"><article><h2 style="font-family:'Cinzel Decorative',serif;margin:8px 0">${tOf(m)}</h2><div style="font-family:'Noto Serif JP',serif;color:#ddd">${alt}</div><p><span class="status ${sc}">${m.attributes?.status||"Unknown"}</span> · ⭐ ${rOf(m)}</p><p class="muted">Author: ${author} · Artist: ${artist}</p><div class="tags">${tags(m,8).map(t=>`<button class="pill gp" data-g="${t}">${t}</button>`).join("")}</div><p>${(m.attributes?.description?.[S.lang]||m.attributes?.description?.en||j?.synopsis||a?.description||"No synopsis available.").slice(0,1200)}</p><p class="muted">Available in: ${av.map(x=>x.toUpperCase()).join(" · ")||"EN"}</p><div>${S.chs.map((c,i)=>`<div class="chap" data-c="${i}"><div><b>${chL(c)}</b> — ${c.attributes?.title||"No title"}</div><small class="muted">${new Date(c.attributes?.publishAt||Date.now()).toLocaleDateString()} · ${c.attributes?.pages||"?"} pages · ${(c.attributes?.translatedLanguage||"").toUpperCase()}</small></div>`).join("")||'<div class="empty">No chapters in selected language.</div>'}</div></article></div>`;
-          $("#modal").classList.add("open");$("#cm").onclick=()=>$("#modal").classList.remove("open");$("#bd").onclick=()=>{if(ok(m.id))S.book=S.book.filter(b=>b.id!==m.id);else S.book.unshift({id:m.id,data:m,addedAt:Date.now()});save();$("#bd").textContent=ok(m.id)?"★ Bookmarked":"☆ Bookmark";toast(ok(m.id)?"Added to Library":"Removed from Library")};$$("[data-c]").forEach(x=>x.onclick=()=>openReader(+x.dataset.c));$$(".gp").forEach(b=>b.onclick=()=>{$("#modal").classList.remove("open");byGenre(b.dataset.g);scrollTo({top:0,behavior:"smooth"})});
-          const dc=$(".dc");dc.onmousemove=e=>{const r=dc.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;dc.style.transform=`perspective(900px) rotateX(${(0.5-y)*8}deg) rotateY(${(x-0.5)*10}deg)`};dc.onmouseleave=()=>dc.style.transform="";
-        }catch{$("#mc").innerHTML='<div class="empty">Failed to load details. <button id="rd">Retry</button></div>';$("#modal").classList.add("open");$("#rd")?.addEventListener("click",()=>openDetail(m))}loader(0)}
+      async function loadHome(){
+        const sections=[
+          {id:"trending",sel:"#trending",n:6,row:true, req:ck({sort:"follow",limit:12,lang:"en"})},
+          {id:"updated", sel:"#updated", n:6,row:true, req:ck({sort:"uploaded",limit:12,lang:"en"})},
+          {id:"new",     sel:"#new",     n:6,row:true, req:ck({sort:"created",limit:12,lang:"en"})},
+          {id:"jp",      sel:"#jp",      n:8,row:false,req:ck({country:"jp",sort:"follow",limit:16,lang:"en"})},
+          {id:"kr",      sel:"#kr",      n:8,row:false,req:ck({country:"kr",sort:"follow",limit:16,lang:"en"})},
+          {id:"cn",      sel:"#cn",      n:8,row:false,req:ck({country:"cn",sort:"follow",limit:16,lang:"en"})},
+          {id:"top",     sel:"#top",     n:8,row:false,req:ck({sort:"rating",limit:20,lang:"en"})}
+        ];
+        sections.forEach(s=>sk($(s.sel),s.n,s.row));
+        const rs=await Promise.allSettled(sections.map(s=>s.req));
+        let tr=[];let failed=0;
+        rs.forEach((r,i)=>{
+          const s=sections[i],el=$(s.sel);
+          if(r.status==="fulfilled"&&r.value?.data?.length){
+            fill(el,r.value.data,s.row);
+            if(s.id==="trending")tr=r.value.data;
+          }else{
+            failed++;
+            el.innerHTML=`<div class="empty">Failed to load. <button data-r>Retry</button></div>`;
+          }
+        });
+        if(tr.length){S.hero=tr.slice(0,5);renderHero()}
+        else{$("#hero").innerHTML='<div class="empty">Failed to load spotlight. <button data-r>Retry</button></div>'}
+        $$("[data-r]").forEach(b=>b.onclick=loadHome);
+        if(failed)toast("Some sections failed");
+      }
+      async function byGenre(g){
+        $$(".pill").forEach(p=>p.classList.toggle("active",p.dataset.g===g));
+        loader(1);
+        try{const d=await ck({q:g,sort:"follow",limit:15,lang:"en"});fill($("#top"),d.data);toast(`Filtered: ${g}`)}
+        catch{toast("Genre filter failed")}
+        loader(0);
+      }
+      async function search(q,target=$("#searchResults"),o={}){
+        if(!q?.trim()){target.innerHTML='<div class="empty">Type a title to begin searching.</div>';return}
+        sk(target,8,false);
+        try{
+          const d=await ck({q,limit:24,lang:"en"});
+          const l=d.data||[];
+          if(!l.length){target.innerHTML='<div class="empty"><svg width="80" height="80" viewBox="0 0 120 120"><circle cx="60" cy="60" r="44" fill="#1d1d2a"/><circle cx="44" cy="54" r="5" fill="#fff"/><circle cx="76" cy="54" r="5" fill="#fff"/><path d="M40 82 Q60 70 80 82" stroke="#fff" stroke-width="4" fill="none"/></svg><p>No results found.</p></div>';return}
+          fill(target,l);
+        }catch{target.innerHTML='<div class="empty">Search failed. <button id="srr">Retry</button></div>';$("#srr")?.addEventListener("click",()=>search(q,target,o))}
+      }
+      async function openDetail(m){
+        S.m=m;loader(1);
+        try{
+          // Fetch full comic detail + chapters from ComicK
+          const [detail,chRes]=await Promise.all([
+            qf(`${CK}/comic/${m.slug}`),
+            qf(`${CK}/comic/${m.slug}/chapters?lang=en&limit=200&page=1`)
+          ]);
+          const full=norm(detail?.comic||detail)||m;
+          S.chs=(chRes?.chapters||[]).map(c=>({
+            id:c.hid,hid:c.hid,
+            attributes:{
+              chapter:c.chap||c.vol||"?",
+              title:c.title||"",
+              publishAt:c.created_at||"",
+              pages:c.page_count||"?",
+              translatedLanguage:c.lang||"en"
+            }
+          }));
+          const author=(full.relationships||[]).find(x=>x.type==="author")?.attributes?.name||"Unknown";
+          const artist=(full.relationships||[]).find(x=>x.type==="artist")?.attributes?.name||"Unknown";
+          const st=(full.attributes?.status||"unknown").toLowerCase();
+          const sc=st.includes("ongo")?"ongo":st.includes("com")?"comp":"hia";
+          const desc=full.attributes?.description?.en||detail?.comic?.mu_comics?.description||detail?.comic?.desc||"No synopsis available.";
+          $("#mbg").style.backgroundImage=`url('${cOf(full)}')`;
+          $("#mc").innerHTML=`
+            <div style="display:flex;justify-content:space-between;position:sticky;top:0;z-index:2;padding-bottom:8px;background:linear-gradient(180deg,rgba(8,8,12,.96),rgba(8,8,12,.35))">
+              <button class="x" id="cm">✕</button>
+              <button class="cta" id="bd">${ok(m.id)?"★ Bookmarked":"☆ Bookmark"}</button>
+            </div>
+            <div class="dw">
+              <img class="dc" src="${cOf(full)}" loading="lazy">
+              <article>
+                <h2 style="font-family:'Cinzel Decorative',serif;margin:8px 0">${tOf(full)}</h2>
+                <p><span class="status ${sc}">${full.attributes?.status||"Unknown"}</span> · ⭐ ${rOf(full)}</p>
+                <p class="muted">Author: ${author} · Artist: ${artist}</p>
+                <div class="tags">${tags(full,8).map(t=>`<button class="pill gp" data-g="${t}">${t}</button>`).join("")}</div>
+                <p style="color:#ccc;font-size:.88rem;line-height:1.7;margin:10px 0">${String(desc).slice(0,1200)}</p>
+                <div>
+                  ${S.chs.length?S.chs.map((c,i)=>`
+                    <div class="chap" data-c="${i}">
+                      <div><b>${chL(c)}</b>${c.attributes?.title?" — "+c.attributes.title:""}</div>
+                      <small class="muted">${c.attributes?.publishAt?new Date(c.attributes.publishAt).toLocaleDateString():""} · ${c.attributes?.pages||"?"} pages</small>
+                    </div>`).join("")
+                  :'<div class="empty">No English chapters found.</div>'}
+                </div>
+              </article>
+            </div>`;
+          $("#modal").classList.add("open");
+          $("#cm").onclick=()=>$("#modal").classList.remove("open");
+          $("#bd").onclick=()=>{
+            if(ok(m.id))S.book=S.book.filter(b=>b.id!==m.id);
+            else S.book.unshift({id:m.id,data:m,addedAt:Date.now()});
+            save();$("#bd").textContent=ok(m.id)?"★ Bookmarked":"☆ Bookmark";
+            toast(ok(m.id)?"Added to Library":"Removed from Library");
+          };
+          $$("[data-c]").forEach(x=>x.onclick=()=>openReader(+x.dataset.c));
+          $$(".gp").forEach(b=>b.onclick=()=>{$("#modal").classList.remove("open");byGenre(b.dataset.g);scrollTo({top:0,behavior:"smooth"})});
+          const dc=$(".dc");
+          dc.onmousemove=e=>{const r=dc.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;dc.style.transform=`perspective(900px) rotateX(${(0.5-y)*8}deg) rotateY(${(x-0.5)*10}deg)`};
+          dc.onmouseleave=()=>dc.style.transform="";
+        }catch(err){
+          console.error(err);
+          $("#mc").innerHTML='<div class="empty">Failed to load details. <button id="rd">Retry</button></div>';
+          $("#modal").classList.add("open");
+          $("#rd")?.addEventListener("click",()=>openDetail(m));
+        }
+        loader(0);
+      }
       async function openReader(i){S.ci=i;$("#reader").classList.add("open");$("#modal").classList.remove("open");await loadChapter()}
-      async function loadChapter(){const ch=S.chs[S.ci];if(!ch){toast("No chapter");return}const key=`${S.m.id}:${ch.id}`,saved=S.prog[key]?.page||0;try{loader(1);const s=await qf(`${BASE}/at-home/server/${ch.id}?forcePort443=true`),base=`${s.baseUrl}/data-saver/${s.chapter.hash}`,files=s.chapter.dataSaver||s.chapter.data||[];$("#rtit").textContent=`${tOf(S.m)} • ${chL(ch)}`;const rv=$("#rv");rv.innerHTML="";files.forEach((f,i)=>{const im=document.createElement("img");im.loading="lazy";im.src=`${base}/${f}`;im.dataset.i=i;let press;im.onpointerdown=()=>press=setTimeout(()=>open(im.src,"_blank","noopener"),700);["pointerup","pointerleave"].forEach(ev=>im.addEventListener(ev,()=>clearTimeout(press)));rv.append(im)});setMode(S.mode);setProgress(saved);const ims=$$("#rv img");if(ims[saved])ims[saved].scrollIntoView({behavior:"smooth",block:"start",inline:"start"});toast(`Resuming from Ch.${ch.attributes?.chapter||"?"}`)}catch{$("#rv").innerHTML='<div class="empty" style="margin:10px">Failed to load pages. <button id="rr">Retry</button></div>';$("#rr")?.addEventListener("click",loadChapter)}loader(0)}
+      async function loadChapter(){
+        const ch=S.chs[S.ci];if(!ch){toast("No chapter");return}
+        const key=`${S.m?.id}:${ch.hid||ch.id}`,saved=S.prog[key]?.page||0;
+        try{
+          loader(1);
+          const data=await qf(`${CK}/chapter/${ch.hid||ch.id}/`);
+          const images=data?.chapter?.images||[];
+          if(!images.length)throw Error("No images");
+          $("#rtit").textContent=`${tOf(S.m||{})} • ${chL(ch)}`;
+          const rv=$("#rv");rv.innerHTML="";
+          images.forEach((img,i)=>{
+            const im=document.createElement("img");
+            im.loading="lazy";
+            im.src=img.url||`https://meo.comick.pictures/${img.b2key}`;
+            im.dataset.i=i;
+            rv.append(im);
+          });
+          setMode(S.mode);setProgress(saved);
+          const ims=$$("#rv img");
+          if(ims[saved])ims[saved].scrollIntoView({behavior:"smooth",block:"start"});
+          toast(`Ch. ${ch.attributes?.chapter||"?"} loaded ✓`);
+        }catch(e){
+          console.error(e);
+          $("#rv").innerHTML='<div class="empty" style="margin:10px">Failed to load pages. <button id="rr">Retry</button></div>';
+          $("#rr")?.addEventListener("click",loadChapter);
+        }
+        loader(0);
+      }
       function setMode(m){S.mode=m;const rv=$("#rv");rv.classList.toggle("vertical",m==="vertical");rv.classList.toggle("horizontal",m==="horizontal");rv.style.direction=$("#rtl").checked&&m==="horizontal"?"rtl":"ltr"}
       function setProgress(init=0){const rv=$("#rv"),ims=$$("#rv img"),t=ims.length;const fn=()=>{if(!t)return;let p=0;if(S.mode==="vertical"){let best=1e9;ims.forEach((im,i)=>{const d=Math.abs(im.getBoundingClientRect().top-80);if(d<best){best=d;p=i}})}else{p=Math.round(rv.scrollLeft/Math.max(1,rv.clientWidth));p=Math.max(0,Math.min(t-1,p))}$("#pinfo").textContent=`${p+1}/${t}`;$("#pbar").style.width=`${((p+1)/t)*100}%`;const ch=S.chs[S.ci];if(ch&&S.m){S.prog[`${S.m.id}:${ch.id}`]={page:p,total:t,at:Date.now()};save()}};rv.onscroll=fn;setTimeout(()=>{if(S.mode==="horizontal")rv.scrollLeft=init*rv.clientWidth;fn()},80)}
       function renderLib(){const g=$("#libGrid"),s=$("#libSort").value;let l=[...S.book];if(s==="az")l.sort((a,b)=>tOf(a.data).localeCompare(tOf(b.data)));if(s==="status")l.sort((a,b)=>(a.data.attributes?.status||"").localeCompare(b.data.attributes?.status||""));if(s==="recent")l.sort((a,b)=>b.addedAt-a.addedAt);if(!l.length){g.innerHTML='<div class="empty">No bookmarks yet. Save manga with ☆ icon.</div>';return}g.innerHTML="";l.forEach((x,i)=>g.append(card(x.data,{idx:i})))}
