@@ -229,17 +229,18 @@
           return null;
         }
       }
-      let hasHomeRetryListener=false;
+      let isHomeRetryListenerBound=false;
       function bindHomeRetryButtons(){
-        if(hasHomeRetryListener)return;
-        hasHomeRetryListener=true;
-        document.addEventListener("click",async e=>{
+        if(isHomeRetryListenerBound)return;
+        isHomeRetryListenerBound=true;
+        $("#home").addEventListener("click",async e=>{
           const b=e.target.closest("[data-home-retry],[data-hero-retry]");
           if(!b)return;
           const id=b.dataset.homeRetry||b.dataset.heroRetry;
           const s=getHomeSection(id);
           if(!s)return;
-          const list=await loadHomeSection(s,{skeleton:!b.dataset.heroRetry});
+          const isHeroRetry=Boolean(b.dataset.heroRetry);
+          const list=await loadHomeSection(s,{skeleton:!isHeroRetry});
           if(s.id==="trending"){
             if(list?.length){S.hero=list.slice(0,5);renderHero()}
             else renderHeroError();
