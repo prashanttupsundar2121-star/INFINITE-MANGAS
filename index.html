@@ -109,92 +109,47 @@
   <div id="toasts"></div><div id="loader"><div style="text-align:center"><div class="sp"></div><div style="font-family:'Cinzel Decorative',serif;margin-top:8px">INFINITE MANGAS</div></div></div>
   <script>
     (()=>{"use strict";
-      // ✅ ComicK API — Native CORS, no proxy needed!
-      const CK="https://api.comick.io";
+      const PX="https://corsproxy.io/?url=",BASE="https://api.mangadex.org";
       const L={en:"English",ja:"Japanese",ko:"Korean",zh:"Chinese (Simplified)","zh-hk":"Chinese (Traditional)",fr:"French",es:"Spanish",pt:"Portuguese",id:"Indonesian",ru:"Russian",ar:"Arabic",de:"German",it:"Italian",pl:"Polish",vi:"Vietnamese",tr:"Turkish",th:"Thai"};
       const G=["Action","Romance","Fantasy","Horror","Comedy","Slice of Life","Sci-Fi","Sports","Mystery","Isekai","Demons","School Life","Martial Arts","Historical","Psychological","Shounen","Shoujo","Seinen","Josei","Hentai"];
       const S={lang:localStorage.getItem("im_lang")||"en",book:JSON.parse(localStorage.getItem("im_book")||"[]"),prog:JSON.parse(localStorage.getItem("im_prog")||"{}"),hero:[],m:null,chs:[],ci:0,mode:"vertical",fit:"width"};
       const $=(s,p=document)=>p.querySelector(s),$$=(s,p=document)=>[...p.querySelectorAll(s)],deb=(f,m=300)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>f(...a),m)}};
       const save=()=>{localStorage.setItem("im_lang",S.lang);localStorage.setItem("im_book",JSON.stringify(S.book));localStorage.setItem("im_prog",JSON.stringify(S.prog))},ok=id=>S.book.some(x=>x.id===id);
       const toast=t=>{const e=document.createElement("div");e.className="toast";e.textContent=t;$("#toasts").append(e);setTimeout(()=>e.remove(),2500)},loader=x=>$("#loader").classList.toggle("show",!!x);
-      // Data extractors for ComicK format
-      const tOf=m=>m?.title||m?.slug||"Untitled";
-      const tags=(m,n=3)=>(m?.genres||[]).map(g=>g?.name||g).filter(Boolean).slice(0,n);
-      const rOf=m=>Number(m?.bayesian_rating||m?.rating||0).toFixed(1);
-      const cOf=m=>{const b=m?.md_covers?.[0]?.b2key||m?.cover_b2key;return b?`https://meo.comick.pictures/${b}`:""};
+      const tOf=m=>{const t=m?.attributes?.title||{};return t[S.lang]||t.en||t.ja||Object.values(t)[0]||"Untitled"};
+      const tags=(m,n=3)=>(m?.attributes?.tags||[]).map(x=>x?.attributes?.name?.en).filter(Boolean).slice(0,n);
+      const rOf=m=>{const r=Number(m?.attributes?.rating?.bayesian||m?.attributes?.rating?.average||0);return r>0?r.toFixed(1):"N/A"};
+      const cOf=m=>{const r=(m?.relationships||[]).find(x=>x.type==="cover_art"),f=r?.attributes?.fileName;return f?`https://uploads.mangadex.org/covers/${m.id}/${f}.512.jpg`:""};
       const chL=c=>`Ch. ${c?.attributes?.chapter||"?"}`;
 
-      // Normalize ComicK comic to internal format
-      function norm(item){
-        if(!item)return null;
-        const statusMap={1:"Ongoing",2:"Completed",3:"Cancelled",4:"Hiatus"};
-        return {
-          id:item.slug||item.hid||String(item.id||""),
-          slug:item.slug,hid:item.hid,
-          title:item.title||item.slug,
-          md_covers:item.md_covers||[],
-          cover_b2key:item.md_covers?.[0]?.b2key||"",
-          genres:item.genres||[],
-          bayesian_rating:item.bayesian_rating||item.rating||"0",
-          attributes:{
-            status:statusMap[item.status]||"Unknown",
-            title:{en:item.title||item.slug||""},
-            tags:(item.genres||[]).map(g=>({attributes:{name:{en:g?.name||g||""}}})),
-            rating:{bayesian:item.bayesian_rating||"0"},
-            description:{en:item.desc||item.mu_comics?.description||"No synopsis available."},
-            altTitles:item.mu_comics?.title?[{en:item.mu_comics.title}]:[]
-          },
-          relationships:[
-            ...(item.authors||[]).map(a=>({type:"author",attributes:{name:a.name||a}})),
-            ...(item.artists||[]).map(a=>({type:"artist",attributes:{name:a.name||a}}))
-          ],
-          latestChapter:{attributes:{chapter:item.last_chapter||"?"}}
-        };
-      }
-
       const CACHE={};
-      const REQUEST_GAP_MS=200;
-      let requestLock=Promise.resolve();
-      let lastRequestAt=0;
-      async function pacedFetch(url,opts){
-        const pacingDelay=requestLock.then(async()=>{
-          const wait=Math.max(0,REQUEST_GAP_MS-(Date.now()-lastRequestAt));
-          if(wait)await new Promise(r=>setTimeout(r,wait));
-          lastRequestAt=Date.now();
-        });
-        requestLock=pacingDelay.then(()=>{},()=>{});
-        await pacingDelay;
-        return fetch(url,opts);
-      }
-      async function qf(url){
-        if(CACHE[url]&&Date.now()-CACHE[url].t<3e5)return CACHE[url].v;
+      async function qf(url,direct=false){
+        const key=url;
+        if(CACHE[key]&&Date.now()-CACHE[key].t<6e5)return CACHE[key].v;
+        const finalUrl=direct?url:PX+encodeURIComponent(url);
         const ctrl=new AbortController();
-        const timer=setTimeout(()=>ctrl.abort(),15000);
+        const timer=setTimeout(()=>ctrl.abort(),12000);
         try{
-          const r=await pacedFetch(url,{signal:ctrl.signal,headers:{"Accept":"application/json"}});
+          const r=await fetch(finalUrl,{signal:ctrl.signal});
           clearTimeout(timer);
           if(!r.ok)throw Error(r.status);
           const d=await r.json();
-          CACHE[url]={v:d,t:Date.now()};
+          CACHE[key]={v:d,t:Date.now()};
           return d;
         }catch(e){clearTimeout(timer);throw e}
       }
 
-      // Fetch comics list from ComicK
-      async function ck(params={}){
-        const u=new URL(`${CK}/v1.0/comics`);
-        u.searchParams.set("limit",params.limit||20);
-        if(params.q)u.searchParams.set("q",params.q);
-        if(params.sort)u.searchParams.set("sort",params.sort);
-        if(params.country)u.searchParams.set("country",params.country);
-        if(params.genre)u.searchParams.set("genre",params.genre);
-        if(params.lang)u.searchParams.set("lang",params.lang||"en");
-        u.searchParams.set("tachiyomi","true");
-        const res=await qf(u.toString());
-        return {data:(Array.isArray(res)?res:(res?.comics||[])).map(norm).filter(Boolean)};
+      async function md(params){
+        const u=new URL(BASE+"/manga");
+        for(const[k,v]of Object.entries(params)){
+          if(Array.isArray(v))v.forEach(x=>u.searchParams.append(`${k}[]`,x));
+          else if(v!=null&&v!=="")u.searchParams.set(k,v);
+        }
+        u.searchParams.append("includes[]","cover_art");
+        return qf(u.toString());
       }
       const sk=(el,n=8,row=false)=>{el.innerHTML="";for(let i=0;i<n;i++){const d=document.createElement("div");d.className="card skeleton";if(row)d.style.minWidth="164px";el.append(d)}};
-      function card(m,{row=false,idx=0}={}){const c=document.createElement("article");c.className="card";c.style.animationDelay=`${Math.min(idx*45,500)}ms`;const pk=Object.keys(S.prog).find(k=>k.startsWith(m.id+":")),p=pk?S.prog[pk]:null,ts=tags(m,2);c.innerHTML=`${ts[0]?`<span class="badge bl">${ts[0]}</span>`:""}<span class="badge br">⭐ ${rOf(m)}</span><img loading="lazy" src="${cOf(m)}" alt=""><div class="shine"></div>${p?`<span class="cont">Continue P.${p.page+1}</span>`:""}<button class="bm">${ok(m.id)?"★":"☆"}</button><div class="cb"><h3 class="ct">${tOf(m)}</h3><p class="cs">${m.attributes?.status||"Unknown"} • ${chL(m.latestChapter||{})}</p></div>`;
+      function card(m,{row=false,idx=0}={}){const c=document.createElement("article");c.className="card";c.style.animationDelay=`${Math.min(idx*45,500)}ms`;const pk=Object.keys(S.prog).find(k=>k.startsWith(m.id+":")),p=pk?S.prog[pk]:null,ts=tags(m,2),cover=cOf(m);c.innerHTML=`${ts[0]?`<span class="badge bl">${ts[0]}</span>`:""}<span class="badge br">⭐ ${rOf(m)}</span><img loading="lazy" src="${cover}" onerror="this.style.display='none'" alt=""><div class="shine"></div>${p?`<span class="cont">Continue P.${p.page+1}</span>`:""}<button class="bm">${ok(m.id)?"★":"☆"}</button><div class="cb"><h3 class="ct">${tOf(m)}</h3><p class="cs">${m.attributes?.status||"Unknown"} • Ch. ${m.latestChapter?.attributes?.chapter||"?"}</p></div>`;
         c.querySelector(".bm").onclick=e=>{e.stopPropagation();if(ok(m.id)){S.book=S.book.filter(b=>b.id!==m.id);toast("Removed from Library")}else{S.book.unshift({id:m.id,data:m,addedAt:Date.now()});toast("Added to Library")}save();c.querySelector(".bm").textContent=ok(m.id)?"★":"☆"};
         c.onmousemove=e=>{const r=c.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;c.style.transform=`perspective(900px) rotateX(${(0.5-y)*15}deg) rotateY(${(x-0.5)*15}deg) scale(1.05)`};c.onmouseleave=()=>c.style.transform="";c.onclick=()=>openDetail(m);if(row)c.style.minWidth="164px";return c}
       const fill=(el,list,row=false)=>{el.innerHTML="";if(!list?.length){el.innerHTML='<div class="empty">No items found.</div>';return}list.forEach((m,i)=>el.append(card(m,{row,idx:i})))};
@@ -202,65 +157,39 @@
       function renderHero(){const h=$("#hero"),d=$("#dots");$$(".hs",h).forEach(x=>x.remove());d.innerHTML="";S.hero.forEach((m,i)=>{const s=document.createElement("article");s.className="hs"+(i===0?" active":"");s.style.backgroundImage=`url('${cOf(m)}')`;s.innerHTML=`<div class="hc"><h3 class="ht">${tOf(m)}</h3><div class="tags">${tags(m,3).map(t=>`<span class="tag">${t}</span>`).join("")}</div><p class="muted" style="margin:0 0 8px">${"⭐".repeat(Math.max(1,Math.round((+rOf(m)||5)/2)))} (${rOf(m)})</p><button class="cta">Read Now</button></div>`;s.querySelector(".cta").onclick=()=>openDetail(m);h.append(s);const b=document.createElement("button");b.className="dot"+(i===0?" active":"");b.onclick=()=>setHero(i);d.append(b)});
         h.onmousemove=e=>{const a=$(".hs.active",h);if(!a)return;const r=h.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;a.style.transform=`perspective(1000px) rotateX(${(0.5-y)*5}deg) rotateY(${(x-0.5)*7}deg)`};h.onmouseleave=()=>{const a=$(".hs.active",h);if(a)a.style.transform=""};clearInterval(ht);ht=setInterval(()=>setHero((hi+1)%S.hero.length),5000)}
       const setHero=i=>{hi=i;$$(".hs").forEach((s,x)=>s.classList.toggle("active",x===i));$$(".dot").forEach((b,x)=>b.classList.toggle("active",x===i))};
-      const HOME_SECTIONS=[
-        {id:"trending",sel:"#trending",n:6,row:true,params:{sort:"follow",limit:12,lang:"en"}},
-        {id:"updated", sel:"#updated", n:6,row:true,params:{sort:"uploaded",limit:12,lang:"en"}},
-        {id:"new",     sel:"#new",     n:6,row:true,params:{sort:"created",limit:12,lang:"en"}},
-        {id:"jp",      sel:"#jp",      n:8,row:false,params:{country:"jp",sort:"follow",limit:16,lang:"en"}},
-        {id:"kr",      sel:"#kr",      n:8,row:false,params:{country:"kr",sort:"follow",limit:16,lang:"en"}},
-        {id:"cn",      sel:"#cn",      n:8,row:false,params:{country:"cn",sort:"follow",limit:16,lang:"en"}},
-        {id:"top",     sel:"#top",     n:8,row:false,params:{sort:"rating",limit:20,lang:"en"}}
-      ];
-      const getHomeSection=id=>HOME_SECTIONS.find(s=>s.id===id);
-      const renderSectionError=s=>{$(s.sel).innerHTML=`<div class="empty">Failed to load. <button data-home-retry="${s.id}">Retry</button></div>`};
-      const renderHeroError=()=>{$("#hero").innerHTML='<div class="empty">Failed to load spotlight. <button data-hero-retry="trending">Retry</button></div>'};
-      async function loadHomeSection(s,{skeleton=true}={}){
-        const el=$(s.sel);
-        if(!el)return null;
-        if(skeleton)sk(el,s.n,s.row);
-        try{
-          const d=await ck(s.params);
-          const list=d?.data||[];
-          if(!list.length)throw Error("No data");
-          fill(el,list,s.row);
-          return list;
-        }catch{
-          renderSectionError(s);
-          return null;
-        }
-      }
-      let isHomeRetryListenerBound=false;
-      function bindHomeRetryButtons(){
-        if(isHomeRetryListenerBound)return;
-        isHomeRetryListenerBound=true;
-        $("#home").addEventListener("click",async e=>{
-          const b=e.target.closest("[data-home-retry],[data-hero-retry]");
-          if(!b)return;
-          const id=b.dataset.homeRetry||b.dataset.heroRetry;
-          const s=getHomeSection(id);
-          if(!s)return;
-          const isHeroRetry=Boolean(b.dataset.heroRetry);
-          const list=await loadHomeSection(s,{skeleton:!isHeroRetry});
-          if(s.id==="trending"){
-            if(list?.length){S.hero=list.slice(0,5);renderHero()}
-            else renderHeroError();
+      async function loadHome(){
+        const lang=[S.lang,"en"].filter((v,i,a)=>a.indexOf(v)===i);
+        const sections=[
+          {id:"trending",sel:"#trending",n:6,row:true, req:md({"order[followedCount]":"desc",limit:12,availableTranslatedLanguage:lang})},
+          {id:"updated", sel:"#updated", n:6,row:true, req:md({"order[latestUploadedChapter]":"desc",limit:12,availableTranslatedLanguage:lang})},
+          {id:"new",     sel:"#new",     n:6,row:true, req:md({"order[createdAt]":"desc",limit:12,availableTranslatedLanguage:lang})},
+          {id:"jp",      sel:"#jp",      n:8,row:false,req:md({originalLanguage:["ja"],"order[followedCount]":"desc",limit:16})},
+          {id:"kr",      sel:"#kr",      n:8,row:false,req:md({originalLanguage:["ko"],"order[followedCount]":"desc",limit:16})},
+          {id:"cn",      sel:"#cn",      n:8,row:false,req:md({originalLanguage:["zh","zh-hk"],"order[followedCount]":"desc",limit:16})},
+          {id:"top",     sel:"#top",     n:8,row:false,req:md({"order[rating]":"desc",limit:20,availableTranslatedLanguage:lang})}
+        ];
+        sections.forEach(s=>sk($(s.sel),s.n,s.row));
+        const rs=await Promise.allSettled(sections.map(s=>s.req));
+        let tr=[];let failed=0;
+        rs.forEach((r,i)=>{
+          const s=sections[i],el=$(s.sel);
+          if(r.status==="fulfilled"&&r.value?.data?.length){
+            fill(el,r.value.data,s.row);
+            if(s.id==="trending")tr=r.value.data;
+          }else{
+            failed++;
+            el.innerHTML=`<div class="empty">Failed to load. <button data-r>Retry</button></div>`;
           }
         });
-      }
-      async function loadHome(){
-        HOME_SECTIONS.forEach(s=>sk($(s.sel),s.n,s.row));
-        const rs=await Promise.allSettled(HOME_SECTIONS.map(s=>loadHomeSection(s,{skeleton:false})));
-        const lists=rs.map(r=>r.status==="fulfilled"?r.value:null);
-        const tr=lists[0]||[];
         if(tr.length){S.hero=tr.slice(0,5);renderHero()}
-        else renderHeroError();
-        bindHomeRetryButtons();
-        if(lists.some(x=>!x))toast("Some sections failed");
+        else{$("#hero").innerHTML='<div class="empty">Failed to load spotlight. <button data-r>Retry</button></div>'}
+        $$("[data-r]").forEach(b=>b.onclick=loadHome);
+        if(failed)toast("Some sections failed");
       }
       async function byGenre(g){
         $$(".pill").forEach(p=>p.classList.toggle("active",p.dataset.g===g));
         loader(1);
-        try{const d=await ck({q:g,sort:"follow",limit:15,lang:"en"});fill($("#top"),d.data);toast(`Filtered: ${g}`)}
+        try{const d=await md({title:g,"order[followedCount]":"desc",limit:15});fill($("#top"),d.data);toast(`Filtered: ${g}`)}
         catch{toast("Genre filter failed")}
         loader(0);
       }
@@ -268,7 +197,14 @@
         if(!q?.trim()){target.innerHTML='<div class="empty">Type a title to begin searching.</div>';return}
         sk(target,8,false);
         try{
-          const d=await ck({q,limit:24,lang:"en"});
+          const p={title:q,limit:24};
+          const lang=o.lang||S.lang;
+          p.availableTranslatedLanguage=[lang,"en"].filter((v,i,a)=>a.indexOf(v)===i);
+          if(o.status)p.status=o.status;
+          if(o.sort==="rating")p["order[rating]"]="desc";
+          else if(o.sort==="follows")p["order[followedCount]"]="desc";
+          else if(o.sort==="latest")p["order[latestUploadedChapter]"]="desc";
+          const d=await md(p);
           const l=d.data||[];
           if(!l.length){target.innerHTML='<div class="empty"><svg width="80" height="80" viewBox="0 0 120 120"><circle cx="60" cy="60" r="44" fill="#1d1d2a"/><circle cx="44" cy="54" r="5" fill="#fff"/><circle cx="76" cy="54" r="5" fill="#fff"/><path d="M40 82 Q60 70 80 82" stroke="#fff" stroke-width="4" fill="none"/></svg><p>No results found.</p></div>';return}
           fill(target,l);
@@ -277,35 +213,29 @@
       async function openDetail(m){
         S.m=m;loader(1);
         try{
-          // Fetch full comic detail + chapters from ComicK
-          const [detail,chRes]=await Promise.all([
-            qf(`${CK}/comic/${m.slug}`),
-            qf(`${CK}/comic/${m.slug}/chapters?lang=en&limit=200&page=1`)
+          const lang=[S.lang,"en"].filter((v,i,a)=>a.indexOf(v)===i);
+          const feedUrl=BASE+`/manga/${m.id}/feed?limit=150&order[chapter]=desc&includes[]=scanlation_group&translatedLanguage[]=${lang.join("&translatedLanguage[]=")}`;
+          const [info,feed]=await Promise.all([
+            qf(BASE+`/manga/${m.id}?includes[]=cover_art&includes[]=author&includes[]=artist`),
+            qf(feedUrl)
           ]);
-          const full=norm(detail?.comic||detail)||m;
-          S.chs=(chRes?.chapters||[]).map(c=>({
-            id:c.hid,hid:c.hid,
-            attributes:{
-              chapter:c.chap||c.vol||"?",
-              title:c.title||"",
-              publishAt:c.created_at||"",
-              pages:c.page_count||"?",
-              translatedLanguage:c.lang||"en"
-            }
-          }));
-          const author=(full.relationships||[]).find(x=>x.type==="author")?.attributes?.name||"Unknown";
-          const artist=(full.relationships||[]).find(x=>x.type==="artist")?.attributes?.name||"Unknown";
+          const full=info?.data||m;
+          S.chs=(feed?.data||[]);
+          const rels=full.relationships||[];
+          const author=rels.find(x=>x.type==="author")?.attributes?.name||"Unknown";
+          const artist=rels.find(x=>x.type==="artist")?.attributes?.name||"Unknown";
           const st=(full.attributes?.status||"unknown").toLowerCase();
           const sc=st.includes("ongo")?"ongo":st.includes("com")?"comp":"hia";
-          const desc=full.attributes?.description?.en||detail?.comic?.mu_comics?.description||detail?.comic?.desc||"No synopsis available.";
-          $("#mbg").style.backgroundImage=`url('${cOf(full)}')`;
+          const desc=Object.values(full.attributes?.description||{})[0]||"No synopsis available.";
+          const cover=cOf(full)||cOf(m);
+          $("#mbg").style.backgroundImage=`url('${cover}')`;
           $("#mc").innerHTML=`
             <div style="display:flex;justify-content:space-between;position:sticky;top:0;z-index:2;padding-bottom:8px;background:linear-gradient(180deg,rgba(8,8,12,.96),rgba(8,8,12,.35))">
               <button class="x" id="cm">✕</button>
               <button class="cta" id="bd">${ok(m.id)?"★ Bookmarked":"☆ Bookmark"}</button>
             </div>
             <div class="dw">
-              <img class="dc" src="${cOf(full)}" loading="lazy">
+              <img class="dc" src="${cover}" loading="lazy" onerror="this.style.background='#1a1a25'">
               <article>
                 <h2 style="font-family:'Cinzel Decorative',serif;margin:8px 0">${tOf(full)}</h2>
                 <p><span class="status ${sc}">${full.attributes?.status||"Unknown"}</span> · ⭐ ${rOf(full)}</p>
@@ -316,9 +246,9 @@
                   ${S.chs.length?S.chs.map((c,i)=>`
                     <div class="chap" data-c="${i}">
                       <div><b>${chL(c)}</b>${c.attributes?.title?" — "+c.attributes.title:""}</div>
-                      <small class="muted">${c.attributes?.publishAt?new Date(c.attributes.publishAt).toLocaleDateString():""} · ${c.attributes?.pages||"?"} pages</small>
+                      <small class="muted">${c.attributes?.publishAt?new Date(c.attributes.publishAt).toLocaleDateString():""} · ${(c.attributes?.translatedLanguage||"en").toUpperCase()}</small>
                     </div>`).join("")
-                  :'<div class="empty">No English chapters found.</div>'}
+                  :'<div class="empty">No chapters found. Try changing language.</div>'}
                 </div>
               </article>
             </div>`;
@@ -326,7 +256,7 @@
           $("#cm").onclick=()=>$("#modal").classList.remove("open");
           $("#bd").onclick=()=>{
             if(ok(m.id))S.book=S.book.filter(b=>b.id!==m.id);
-            else S.book.unshift({id:m.id,data:m,addedAt:Date.now()});
+            else S.book.unshift({id:m.id,data:full,addedAt:Date.now()});
             save();$("#bd").textContent=ok(m.id)?"★ Bookmarked":"☆ Bookmark";
             toast(ok(m.id)?"Added to Library":"Removed from Library");
           };
@@ -346,19 +276,21 @@
       async function openReader(i){S.ci=i;$("#reader").classList.add("open");$("#modal").classList.remove("open");await loadChapter()}
       async function loadChapter(){
         const ch=S.chs[S.ci];if(!ch){toast("No chapter");return}
-        const key=`${S.m?.id}:${ch.hid||ch.id}`,saved=S.prog[key]?.page||0;
+        const key=`${S.m?.id}:${ch.id}`,saved=S.prog[key]?.page||0;
         try{
           loader(1);
-          const data=await qf(`${CK}/chapter/${ch.hid||ch.id}/`);
-          const images=data?.chapter?.images||[];
-          if(!images.length)throw Error("No images");
+          const srv=await qf(BASE+`/at-home/server/${ch.id}`);
+          const base=`${srv.baseUrl}/data-saver/${srv.chapter.hash}`;
+          const files=srv.chapter.dataSaver||srv.chapter.data||[];
+          if(!files.length)throw Error("No pages");
           $("#rtit").textContent=`${tOf(S.m||{})} • ${chL(ch)}`;
           const rv=$("#rv");rv.innerHTML="";
-          images.forEach((img,i)=>{
+          files.forEach((f,i)=>{
             const im=document.createElement("img");
             im.loading="lazy";
-            im.src=img.url||`https://meo.comick.pictures/${img.b2key}`;
+            im.src=`${base}/${f}`;
             im.dataset.i=i;
+            im.onerror=()=>im.style.background="#1a1a25";
             rv.append(im);
           });
           setMode(S.mode);setProgress(saved);
@@ -375,10 +307,10 @@
       function setMode(m){S.mode=m;const rv=$("#rv");rv.classList.toggle("vertical",m==="vertical");rv.classList.toggle("horizontal",m==="horizontal");rv.style.direction=$("#rtl").checked&&m==="horizontal"?"rtl":"ltr"}
       function setProgress(init=0){const rv=$("#rv"),ims=$$("#rv img"),t=ims.length;const fn=()=>{if(!t)return;let p=0;if(S.mode==="vertical"){let best=1e9;ims.forEach((im,i)=>{const d=Math.abs(im.getBoundingClientRect().top-80);if(d<best){best=d;p=i}})}else{p=Math.round(rv.scrollLeft/Math.max(1,rv.clientWidth));p=Math.max(0,Math.min(t-1,p))}$("#pinfo").textContent=`${p+1}/${t}`;$("#pbar").style.width=`${((p+1)/t)*100}%`;const ch=S.chs[S.ci];if(ch&&S.m){S.prog[`${S.m.id}:${ch.id}`]={page:p,total:t,at:Date.now()};save()}};rv.onscroll=fn;setTimeout(()=>{if(S.mode==="horizontal")rv.scrollLeft=init*rv.clientWidth;fn()},80)}
       function renderLib(){const g=$("#libGrid"),s=$("#libSort").value;let l=[...S.book];if(s==="az")l.sort((a,b)=>tOf(a.data).localeCompare(tOf(b.data)));if(s==="status")l.sort((a,b)=>(a.data.attributes?.status||"").localeCompare(b.data.attributes?.status||""));if(s==="recent")l.sort((a,b)=>b.addedAt-a.addedAt);if(!l.length){g.innerHTML='<div class="empty">No bookmarks yet. Save manga with ☆ icon.</div>';return}g.innerHTML="";l.forEach((x,i)=>g.append(card(x.data,{idx:i})))}
-      const setPage=id=>{$$(".page").forEach(p=>p.classList.toggle("active",p.id===id));$$(".tab").forEach(t=>t.classList.toggle("active",t.dataset.p===id));if(id==="search")$("#searchInput").focus();if(id==="library")renderLib()};
+      const setPage=id=>{$$(".page").forEach(p=>p.classList.toggle("active",p.id===id));$$(".tab").forEach(t=>t.classList.toggle("active",t.dataset.p===id));if(id==="search")$("#searchInput").focus();if(id==="library")renderLib();if(id==="community")$("#drawer").classList.add("open")};
       function buildUI(){const gs=$("#genres"),fg=$("#fGenre"),ls=$("#langSel"),fl=$("#fLang");G.forEach(g=>{const b=document.createElement("button");b.className="pill";b.dataset.g=g;b.textContent=g;b.onclick=()=>byGenre(g);gs.append(b);const o=document.createElement("option");o.value=g;o.textContent=g;fg.append(o)});Object.entries(L).forEach(([k,v])=>{const a=document.createElement("option"),b=document.createElement("option");a.value=b.value=k;a.textContent=b.textContent=v;if(k===S.lang){a.selected=b.selected=true}ls.append(a);fl.append(b)})}
       function animTitles(){const io=new IntersectionObserver(es=>es.forEach(e=>e.isIntersecting&&e.target.classList.add("in")),{threshold:.2});$$("[data-anim]").forEach(e=>io.observe(e))}
-      function intro(){const t="INFINITE MANGAS";$("#logo").innerHTML=t.split("").map((c,i)=>`<span style="animation-delay:${i*55}ms">${c===" "?"&nbsp;":c}</span>`).join("");const cv=$("#inkCanvas"),ctx=cv.getContext("2d"),rs=()=>{cv.width=innerWidth;cv.height=innerHeight};rs();addEventListener("resize",rs);const d=Array.from({length:80},()=>({x:Math.random()*cv.width,y:Math.random()*cv.height,r:Math.random()*2+1,v:Math.random()*.35+.15}));let run=true;(function tick(){if(!run)return;ctx.clearRect(0,0,cv.width,cv.height);d.forEach(p=>{p.y-=p.v;if(p.y<-6)p.y=cv.height+6;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle="rgba(230,57,70,.32)";ctx.fill()});requestAnimationFrame(tick)})();const done=()=>{run=false;$("#intro").classList.add("fade");$("#app").classList.add("live")};$("#skipIntro").onclick=done;setTimeout(done,3200)}
+      function intro(){const t="INFINITE MANGAS";$("#logo").innerHTML=t.split("").map((c,i)=>`<span style="animation-delay:${i*55}ms">${c===" "?"&nbsp;":c}</span>`).join("");const cv=$("#inkCanvas"),ctx=cv.getContext("2d"),rs=()=>{cv.width=innerWidth;cv.height=innerHeight};rs();addEventListener("resize",rs);const d=Array.from({length:80},()=>({x:Math.random()*cv.width,y:Math.random()*cv.height,r:Math.random()*2+1,v:Math.random()*.35+.15}));let run=true;(function tick(){if(!run)return;ctx.clearRect(0,0,cv.width,cv.height);d.forEach(p=>{p.y-=p.v;if(p.y<-6)p.y=cv.height+6;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle="rgba(230,57,70,.32)";ctx.fill()});requestAnimationFrame(tick)})();const done=()=>{run=false;$("#intro").classList.add("fade");$("#app").classList.add("live")};$("#skipIntro").onclick=done;setTimeout(done,2000)}
       function heroParticles(){const cv=$("#heroParticles"),h=$("#hero"),c=cv.getContext("2d"),p=Array.from({length:40},()=>({x:0,y:0,r:0,v:0,a:0}));const rs=()=>{cv.width=h.clientWidth;cv.height=h.clientHeight;p.forEach(x=>Object.assign(x,{x:Math.random()*cv.width,y:Math.random()*cv.height,r:Math.random()*2+1,v:Math.random()*.4+.1,a:Math.random()*.6+.2}))};rs();addEventListener("resize",rs);(function d(){c.clearRect(0,0,cv.width,cv.height);p.forEach(x=>{x.y-=x.v;if(x.y<-6)x.y=cv.height+6;c.beginPath();c.arc(x.x,x.y,x.r,0,Math.PI*2);c.fillStyle=`rgba(255,255,255,${x.a*.18})`;c.fill()});requestAnimationFrame(d)})()}
       function bind(){ $$(".tab").forEach(b=>b.onclick=()=>setPage(b.dataset.p)); $("#menuBtn").onclick=()=>$("#drawer").classList.toggle("open"); $("#closeDrawer").onclick=()=>$("#drawer").classList.remove("open");
         $("#hp").onclick=()=>setHero((hi-1+S.hero.length)%S.hero.length);$("#hn").onclick=()=>setHero((hi+1)%S.hero.length);
@@ -389,7 +321,7 @@
         $("#prevCh").onclick=async()=>{if(S.ci<S.chs.length-1){S.ci++;await loadChapter()}};$("#nextCh").onclick=async()=>{if(S.ci>0){S.ci--;await loadChapter()}};
         $("#rv").addEventListener("click",e=>{const x=e.clientX/innerWidth;if(S.mode==="horizontal"){if(x<.2)$("#rv").scrollLeft-=$("#rv").clientWidth;else if(x>.8)$("#rv").scrollLeft+=$("#rv").clientWidth}});
         let sx=0;$("#hero").addEventListener("touchstart",e=>sx=e.changedTouches[0].clientX,{passive:true});$("#hero").addEventListener("touchend",e=>{const d=e.changedTouches[0].clientX-sx;if(Math.abs(d)>40)setHero(d<0?(hi+1)%S.hero.length:(hi-1+S.hero.length)%S.hero.length)},{passive:true})}
-      (async()=>{buildUI();animTitles();bind();intro();heroParticles();loader(1);await loadHome();loader(0);$("#searchResults").innerHTML='<div class="empty">Type a title to begin searching.</div>';renderLib()})().catch(()=>{loader(0);toast("Initialization failed")});
+      (async()=>{buildUI();animTitles();bind();intro();heroParticles();loadHome();$("#searchResults").innerHTML='<div class="empty">Type a title to begin searching.</div>';renderLib()})().catch(e=>{console.error(e);toast("Init error")});
     })();
   </script>
 </body>
