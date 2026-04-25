@@ -109,7 +109,8 @@
   <div id="toasts"></div><div id="loader"><div style="text-align:center"><div class="sp"></div><div style="font-family:'Cinzel Decorative',serif;margin-top:8px">INFINITE MANGAS</div></div></div>
   <script>
     (()=>{"use strict";
-      const PX="https://corsproxy.io/?url=",BASE="https://api.mangadex.org";
+      const PROXIES=["https://corsproxy.io/?","https://api.allorigins.win/raw?url=","https://corsproxy.org/?"];
+      const BASE="https://api.mangadex.org";
       const L={en:"English",ja:"Japanese",ko:"Korean",zh:"Chinese (Simplified)","zh-hk":"Chinese (Traditional)",fr:"French",es:"Spanish",pt:"Portuguese",id:"Indonesian",ru:"Russian",ar:"Arabic",de:"German",it:"Italian",pl:"Polish",vi:"Vietnamese",tr:"Turkish",th:"Thai"};
       const G=["Action","Romance","Fantasy","Horror","Comedy","Slice of Life","Sci-Fi","Sports","Mystery","Isekai","Demons","School Life","Martial Arts","Historical","Psychological","Shounen","Shoujo","Seinen","Josei","Hentai"];
       const S={lang:localStorage.getItem("im_lang")||"en",book:JSON.parse(localStorage.getItem("im_book")||"[]"),prog:JSON.parse(localStorage.getItem("im_prog")||"{}"),hero:[],m:null,chs:[],ci:0,mode:"vertical",fit:"width"};
@@ -124,19 +125,17 @@
 
       const CACHE={};
       async function qf(url,direct=false){
-        const key=url;
-        if(CACHE[key]&&Date.now()-CACHE[key].t<6e5)return CACHE[key].v;
-        const finalUrl=direct?url:PX+encodeURIComponent(url);
-        const ctrl=new AbortController();
-        const timer=setTimeout(()=>ctrl.abort(),12000);
-        try{
-          const r=await fetch(finalUrl,{signal:ctrl.signal});
-          clearTimeout(timer);
-          if(!r.ok)throw Error(r.status);
-          const d=await r.json();
-          CACHE[key]={v:d,t:Date.now()};
-          return d;
-        }catch(e){clearTimeout(timer);throw e}
+        if(CACHE[url]&&Date.now()-CACHE[url].t<6e5)return CACHE[url].v;
+        if(direct){const r=await fetch(url);if(!r.ok)throw Error(r.status);const d=await r.json();CACHE[url]={v:d,t:Date.now()};return d}
+        for(const px of PROXIES){
+          try{
+            const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),10000);
+            const r=await fetch(px+encodeURIComponent(url),{signal:ctrl.signal});
+            clearTimeout(timer);if(!r.ok)continue;
+            const d=await r.json();CACHE[url]={v:d,t:Date.now()};return d;
+          }catch{continue}
+        }
+        throw Error("All proxies failed");
       }
 
       async function md(params){
