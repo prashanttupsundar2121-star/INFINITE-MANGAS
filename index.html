@@ -109,7 +109,7 @@
   <div id="toasts"></div><div id="loader"><div style="text-align:center"><div class="sp"></div><div style="font-family:'Cinzel Decorative',serif;margin-top:8px">INFINITE MANGAS</div></div></div>
   <script>
     (()=>{"use strict";
-      const BASE="https://api.mangadex.org";
+      const BASE="/proxy";  // Our Render server proxies to MangaDex
       const L={en:"English",ja:"Japanese",ko:"Korean",zh:"Chinese (Simplified)","zh-hk":"Chinese (Traditional)",fr:"French",es:"Spanish",pt:"Portuguese",id:"Indonesian",ru:"Russian",ar:"Arabic",de:"German",it:"Italian",pl:"Polish",vi:"Vietnamese",tr:"Turkish",th:"Thai"};
       const G=["Action","Romance","Fantasy","Horror","Comedy","Slice of Life","Sci-Fi","Sports","Mystery","Isekai","Demons","School Life","Martial Arts","Historical","Psychological","Shounen","Shoujo","Seinen","Josei","Hentai"];
       const S={lang:localStorage.getItem("im_lang")||"en",book:JSON.parse(localStorage.getItem("im_book")||"[]"),prog:JSON.parse(localStorage.getItem("im_prog")||"{}"),hero:[],m:null,chs:[],ci:0,mode:"vertical",fit:"width"};
@@ -138,18 +138,22 @@
         }catch(e){throw e}
       }
 
-      // Build MangaDex manga URL
-      function mdUrl(path,params={}){
-        const u=new URL(BASE+path);
+      // Build MangaDex URL WITHOUT encoding brackets (critical!)
+      function mdUrl(path, params={}){
+        let qs="";
         for(const[k,v]of Object.entries(params)){
-          if(Array.isArray(v))v.forEach(x=>u.searchParams.append(k+"[]",x));
-          else if(v!=null&&v!=="")u.searchParams.set(k,String(v));
+          if(Array.isArray(v))v.forEach(x=>{qs+=(qs?"&":"")+k+"="+encodeURIComponent(x)});
+          else if(v!=null&&v!=="")qs+=(qs?"&":"")+k+"="+encodeURIComponent(String(v));
         }
-        return u.toString();
+        return BASE+path+(qs?"?"+qs:"");
       }
 
       async function fetchManga(params){
-        return qf(mdUrl("/manga",{...params,"includes[]":["cover_art","author","artist"]}));
+        const url=mdUrl("/manga",{
+          ...params,
+          "includes[]":["cover_art","author","artist"],
+        });
+        return qf(url);
       }
 
       async function loadHome(){
@@ -224,9 +228,11 @@
         S.m=m;loader(true);
         try{
           const lang=S.lang==="en"?["en"]:["en",S.lang];
-          const feedUrl=mdUrl(`/manga/${m.id}/feed`,{limit:200,"order[chapter]":"desc","translatedLanguage[]":lang});
+          let feedQs="limit=200&order[chapter]=desc";
+          lang.forEach(l=>feedQs+="&translatedLanguage[]="+l);
+          const feedUrl=BASE+"/manga/"+m.id+"/feed?"+feedQs;
           const [info,feed]=await Promise.all([
-            qf(mdUrl(`/manga/${m.id}`,{"includes[]":["cover_art","author","artist"]})),
+            qf(BASE+"/manga/"+m.id+"?includes[]=cover_art&includes[]=author&includes[]=artist"),
             qf(feedUrl)
           ]);
           const full=info?.data||m;
