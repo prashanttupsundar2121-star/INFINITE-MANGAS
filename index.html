@@ -109,45 +109,217 @@
   <div id="toasts"></div><div id="loader"><div style="text-align:center"><div class="sp"></div><div style="font-family:'Cinzel Decorative',serif;margin-top:8px">INFINITE MANGAS</div></div></div>
   <script>
     (()=>{"use strict";
-      const PROXIES=["https://corsproxy.io/?","https://api.allorigins.win/raw?url=","https://corsproxy.org/?"];
       const BASE="https://api.mangadex.org";
       const L={en:"English",ja:"Japanese",ko:"Korean",zh:"Chinese (Simplified)","zh-hk":"Chinese (Traditional)",fr:"French",es:"Spanish",pt:"Portuguese",id:"Indonesian",ru:"Russian",ar:"Arabic",de:"German",it:"Italian",pl:"Polish",vi:"Vietnamese",tr:"Turkish",th:"Thai"};
       const G=["Action","Romance","Fantasy","Horror","Comedy","Slice of Life","Sci-Fi","Sports","Mystery","Isekai","Demons","School Life","Martial Arts","Historical","Psychological","Shounen","Shoujo","Seinen","Josei","Hentai"];
       const S={lang:localStorage.getItem("im_lang")||"en",book:JSON.parse(localStorage.getItem("im_book")||"[]"),prog:JSON.parse(localStorage.getItem("im_prog")||"{}"),hero:[],m:null,chs:[],ci:0,mode:"vertical",fit:"width"};
-      const $=(s,p=document)=>p.querySelector(s),$$=(s,p=document)=>[...p.querySelectorAll(s)],deb=(f,m=300)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>f(...a),m)}};
+      const $=(s,p=document)=>p.querySelector(s),$$=(s,p=document)=>[...p.querySelectorAll(s)],deb=(f,d=300)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>f(...a),d)}};
       const save=()=>{localStorage.setItem("im_lang",S.lang);localStorage.setItem("im_book",JSON.stringify(S.book));localStorage.setItem("im_prog",JSON.stringify(S.prog))},ok=id=>S.book.some(x=>x.id===id);
-      const toast=t=>{const e=document.createElement("div");e.className="toast";e.textContent=t;$("#toasts").append(e);setTimeout(()=>e.remove(),2500)},loader=x=>$("#loader").classList.toggle("show",!!x);
+      const toast=t=>{const e=document.createElement("div");e.className="toast";e.textContent=t;$("#toasts").append(e);setTimeout(()=>e.remove(),3000)};
+      const loader=x=>$("#loader").classList.toggle("show",!!x);
       const tOf=m=>{const t=m?.attributes?.title||{};return t[S.lang]||t.en||t.ja||Object.values(t)[0]||"Untitled"};
       const tags=(m,n=3)=>(m?.attributes?.tags||[]).map(x=>x?.attributes?.name?.en).filter(Boolean).slice(0,n);
       const rOf=m=>{const r=Number(m?.attributes?.rating?.bayesian||m?.attributes?.rating?.average||0);return r>0?r.toFixed(1):"N/A"};
       const cOf=m=>{const r=(m?.relationships||[]).find(x=>x.type==="cover_art"),f=r?.attributes?.fileName;return f?`https://uploads.mangadex.org/covers/${m.id}/${f}.512.jpg`:""};
       const chL=c=>`Ch. ${c?.attributes?.chapter||"?"}`;
 
+      // Simple cache
       const CACHE={};
-      async function qf(url,direct=false){
-        if(CACHE[url]&&Date.now()-CACHE[url].t<6e5)return CACHE[url].v;
-        if(direct){const r=await fetch(url);if(!r.ok)throw Error(r.status);const d=await r.json();CACHE[url]={v:d,t:Date.now()};return d}
-        for(const px of PROXIES){
-          try{
-            const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),10000);
-            const r=await fetch(px+encodeURIComponent(url),{signal:ctrl.signal});
-            clearTimeout(timer);if(!r.ok)continue;
-            const d=await r.json();CACHE[url]={v:d,t:Date.now()};return d;
-          }catch{continue}
-        }
-        throw Error("All proxies failed");
+      const cget=k=>{const x=CACHE[k];return x&&Date.now()-x.t<6e5?x.v:null};
+      const cset=(k,v)=>{CACHE[k]={v,t:Date.now()};return v};
+
+      // Direct fetch - MangaDex has CORS enabled
+      async function qf(url){
+        const c=cget(url);if(c)return c;
+        try{
+          const r=await fetch(url,{method:"GET",headers:{"Content-Type":"application/json"}});
+          if(!r.ok)throw Error("HTTP "+r.status);
+          return cset(url,await r.json());
+        }catch(e){throw e}
       }
 
-      async function md(params){
-        const u=new URL(BASE+"/manga");
+      // Build MangaDex manga URL
+      function mdUrl(path,params={}){
+        const u=new URL(BASE+path);
         for(const[k,v]of Object.entries(params)){
-          if(Array.isArray(v))v.forEach(x=>u.searchParams.append(`${k}[]`,x));
-          else if(v!=null&&v!=="")u.searchParams.set(k,v);
+          if(Array.isArray(v))v.forEach(x=>u.searchParams.append(k+"[]",x));
+          else if(v!=null&&v!=="")u.searchParams.set(k,String(v));
         }
-        u.searchParams.append("includes[]","cover_art");
-        return qf(u.toString());
+        return u.toString();
       }
-      const sk=(el,n=8,row=false)=>{el.innerHTML="";for(let i=0;i<n;i++){const d=document.createElement("div");d.className="card skeleton";if(row)d.style.minWidth="164px";el.append(d)}};
+
+      async function fetchManga(params){
+        return qf(mdUrl("/manga",{...params,"includes[]":["cover_art","author","artist"]}));
+      }
+
+      async function loadHome(){
+        const lang=S.lang==="en"?["en"]:["en",S.lang];
+        const defs=[
+          {id:"trending",sel:"#trending",row:true,n:8,
+           params:{"order[followedCount]":"desc",limit:12,"availableTranslatedLanguage[]":lang}},
+          {id:"updated",sel:"#updated",row:true,n:8,
+           params:{"order[latestUploadedChapter]":"desc",limit:12,"availableTranslatedLanguage[]":lang}},
+          {id:"new",sel:"#new",row:true,n:8,
+           params:{"order[createdAt]":"desc",limit:12,"availableTranslatedLanguage[]":lang}},
+          {id:"jp",sel:"#jp",row:false,n:8,
+           params:{"order[followedCount]":"desc",limit:16,"originalLanguage[]":["ja"]}},
+          {id:"kr",sel:"#kr",row:false,n:8,
+           params:{"order[followedCount]":"desc",limit:16,"originalLanguage[]":["ko"]}},
+          {id:"cn",sel:"#cn",row:false,n:8,
+           params:{"order[followedCount]":"desc",limit:16,"originalLanguage[]":["zh","zh-hk"]}},
+          {id:"top",sel:"#top",row:false,n:10,
+           params:{"order[rating]":"desc",limit:20,"availableTranslatedLanguage[]":lang}}
+        ];
+        defs.forEach(d=>sk($(d.sel),d.n,d.row));
+        const results=await Promise.allSettled(defs.map(d=>fetchManga(d.params)));
+        let trending=[];
+        results.forEach((r,i)=>{
+          const d=defs[i],el=$(d.sel);
+          if(r.status==="fulfilled"&&r.value?.data?.length){
+            fill(el,r.value.data,d.row);
+            if(d.id==="trending")trending=r.value.data;
+          }else{
+            el.innerHTML=`<div class="empty">Failed to load. <button class="retry-btn">Retry</button></div>`;
+            el.querySelector(".retry-btn")?.addEventListener("click",loadHome);
+          }
+        });
+        if(trending.length){S.hero=trending.slice(0,5);renderHero();}
+        else{const h=$("#hero");if(h)h.innerHTML='<div class="empty">Could not load spotlight.</div>';}
+      }
+
+      async function byGenre(g){
+        $$(".pill").forEach(p=>p.classList.toggle("active",p.dataset.g===g));
+        loader(true);
+        try{
+          const tag=await qf(mdUrl("/manga/tag"));
+          const tagObj=(tag?.data||[]).find(t=>t.attributes?.name?.en?.toLowerCase()===g.toLowerCase());
+          const params={"order[followedCount]":"desc",limit:15};
+          if(tagObj)params["includedTags[]"]=[tagObj.id];
+          else params.title=g;
+          const d=await fetchManga(params);
+          if(d?.data?.length)fill($("#top"),d.data,false);
+          else toast("No results for: "+g);
+        }catch{toast("Filter failed");}
+        loader(false);
+      }
+
+      async function search(q,target=$("#searchResults"),opts={}){
+        if(!q?.trim()){target.innerHTML='<div class="empty">Type a title to search.</div>';return}
+        sk(target,8,false);
+        try{
+          const params={title:q,limit:24};
+          const lang=opts.lang||S.lang;
+          params["availableTranslatedLanguage[]"]=lang==="en"?["en"]:["en",lang];
+          if(opts.status)params.status=opts.status;
+          const sortMap={rating:"order[rating]",follows:"order[followedCount]",latest:"order[latestUploadedChapter]"};
+          if(opts.sort&&sortMap[opts.sort])params[sortMap[opts.sort]]="desc";
+          const d=await fetchManga(params);
+          const list=d?.data||[];
+          if(!list.length){target.innerHTML='<div class="empty">No results found for "'+q+'"</div>';return}
+          fill(target,list,false);
+        }catch{target.innerHTML='<div class="empty">Search failed. <button id="srr">Retry</button></div>';document.getElementById("srr")?.addEventListener("click",()=>search(q,target,opts));}
+      }
+
+      async function openDetail(m){
+        S.m=m;loader(true);
+        try{
+          const lang=S.lang==="en"?["en"]:["en",S.lang];
+          const feedUrl=mdUrl(`/manga/${m.id}/feed`,{limit:200,"order[chapter]":"desc","translatedLanguage[]":lang});
+          const [info,feed]=await Promise.all([
+            qf(mdUrl(`/manga/${m.id}`,{"includes[]":["cover_art","author","artist"]})),
+            qf(feedUrl)
+          ]);
+          const full=info?.data||m;
+          S.chs=feed?.data||[];
+          const rels=full.relationships||[];
+          const author=rels.find(x=>x.type==="author")?.attributes?.name||"Unknown";
+          const artist=rels.find(x=>x.type==="artist")?.attributes?.name||"Unknown";
+          const st=(full.attributes?.status||"").toLowerCase();
+          const sc=st.includes("ongo")?"ongo":st.includes("comp")?"comp":"hia";
+          const descObj=full.attributes?.description||{};
+          const desc=descObj[S.lang]||descObj.en||Object.values(descObj)[0]||"No synopsis available.";
+          const cover=cOf(full)||cOf(m);
+          $("#mbg").style.backgroundImage=`url('${cover}')`;
+          $("#mc").innerHTML=`
+            <div style="display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:2;padding-bottom:8px;background:linear-gradient(180deg,rgba(8,8,12,.96) 60%,transparent)">
+              <button class="x" id="cm">✕ Close</button>
+              <button class="cta" id="bd">${ok(m.id)?"★ Saved":"☆ Save"}</button>
+            </div>
+            <div class="dw">
+              <img class="dc" src="${cover}" loading="lazy" onerror="this.style.background='#1a1a25';this.alt='No cover'">
+              <article>
+                <h2 style="font-family:'Cinzel Decorative',serif;font-size:clamp(.9rem,3vw,1.4rem);margin-bottom:6px">${tOf(full)}</h2>
+                <p style="margin:4px 0"><span class="status ${sc}">${full.attributes?.status||"Unknown"}</span> <span style="color:#ffd60a;margin-left:6px">⭐ ${rOf(full)}</span></p>
+                <p class="muted" style="font-size:.8rem;margin:4px 0">✍️ ${author} · 🎨 ${artist}</p>
+                <div class="tags" style="margin:8px 0;display:flex;flex-wrap:wrap;gap:5px">${tags(full,8).map(t=>`<button class="pill gp" data-g="${t}" style="font-size:.72rem;padding:4px 10px">${t}</button>`).join("")}</div>
+                <p style="color:#ccc;font-size:.85rem;line-height:1.7;margin:10px 0;max-height:180px;overflow-y:auto">${String(desc).replace(/</g,"&lt;").slice(0,1500)}</p>
+                <p class="muted" style="font-size:.78rem;margin-bottom:8px">📚 ${S.chs.length} chapters found</p>
+                <div style="max-height:300px;overflow-y:auto">
+                  ${S.chs.length
+                    ?S.chs.map((c,i)=>`<div class="chap" data-c="${i}" style="padding:10px 6px;border-bottom:1px solid rgba(255,255,255,.07);cursor:pointer">
+                        <div style="font-weight:700;font-size:.88rem">${chL(c)}${c.attributes?.title?" — "+c.attributes.title.slice(0,40):""}</div>
+                        <small class="muted">${c.attributes?.publishAt?new Date(c.attributes.publishAt).toLocaleDateString():"?"} · ${(c.attributes?.translatedLanguage||"en").toUpperCase()}</small>
+                      </div>`).join("")
+                    :'<div class="empty">No chapters found. Try changing language in top menu.</div>'}
+                </div>
+              </article>
+            </div>`;
+          $("#modal").classList.add("open");
+          $("#cm").onclick=()=>$("#modal").classList.remove("open");
+          $("#bd").onclick=()=>{
+            if(ok(m.id))S.book=S.book.filter(b=>b.id!==m.id);
+            else S.book.unshift({id:m.id,data:full,addedAt:Date.now()});
+            save();
+            document.getElementById("bd").textContent=ok(m.id)?"★ Saved":"☆ Save";
+            toast(ok(m.id)?"Saved to Library!":"Removed from Library");
+          };
+          $$("[data-c]").forEach(x=>x.onclick=()=>openReader(+x.dataset.c));
+          $$(".gp[data-g]").forEach(b=>b.onclick=()=>{$("#modal").classList.remove("open");byGenre(b.dataset.g);});
+          const dc=document.querySelector(".dc");
+          if(dc){dc.onmousemove=e=>{const r=dc.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;dc.style.transform=`perspective(900px) rotateX(${(0.5-y)*8}deg) rotateY(${(x-0.5)*10}deg)`};dc.onmouseleave=()=>dc.style.transform="";}
+        }catch(err){
+          console.error("openDetail error:",err);
+          $("#mc").innerHTML=`<div class="empty" style="padding:20px">Failed to load. <button id="rd">Retry</button></div>`;
+          $("#modal").classList.add("open");
+          document.getElementById("rd")?.addEventListener("click",()=>openDetail(m));
+        }
+        loader(false);
+      }
+
+      function openReader(i){S.ci=i;$("#reader").classList.add("open");loadChapter();}
+
+      async function loadChapter(){
+        const ch=S.chs[S.ci];if(!ch){toast("No chapter");return}
+        const key=`${S.m?.id||""}:${ch.id}`;
+        const saved=S.prog[key]?.page||0;
+        loader(true);
+        try{
+          const srv=await qf(`${BASE}/at-home/server/${ch.id}`);
+          const base=`${srv.baseUrl}/data-saver/${srv.chapter.hash}`;
+          const files=srv.chapter.dataSaver||srv.chapter.data||[];
+          if(!files.length)throw Error("No pages");
+          const rv=$("#rv");rv.innerHTML="";
+          $("#rtit").textContent=`${tOf(S.m||{})} · ${chL(ch)}`;
+          files.forEach((f,i)=>{
+            const im=document.createElement("img");
+            im.loading="lazy";im.src=`${base}/${f}`;im.dataset.i=i;
+            im.onerror=()=>{im.style.cssText="background:#1a1a25;min-height:200px;display:block;width:100%";};
+            rv.append(im);
+          });
+          S.prog[key]={page:saved};save();
+          setMode(S.mode);setProgress(saved);
+          const imgs=$$("#rv img");
+          if(imgs[saved])setTimeout(()=>imgs[saved].scrollIntoView({block:"start"}),100);
+          toast(`Ch.${ch.attributes?.chapter||"?"} — ${files.length} pages`);
+        }catch(e){
+          console.error("loadChapter error:",e);
+          $("#rv").innerHTML='<div class="empty" style="margin:20px">Failed to load pages.<br><button id="rr" style="margin-top:8px">Retry</button></div>';
+          document.getElementById("rr")?.addEventListener("click",loadChapter);
+        }
+        loader(false);
+      }
+
+
       function card(m,{row=false,idx=0}={}){const c=document.createElement("article");c.className="card";c.style.animationDelay=`${Math.min(idx*45,500)}ms`;const pk=Object.keys(S.prog).find(k=>k.startsWith(m.id+":")),p=pk?S.prog[pk]:null,ts=tags(m,2),cover=cOf(m);c.innerHTML=`${ts[0]?`<span class="badge bl">${ts[0]}</span>`:""}<span class="badge br">⭐ ${rOf(m)}</span><img loading="lazy" src="${cover}" onerror="this.style.display='none'" alt=""><div class="shine"></div>${p?`<span class="cont">Continue P.${p.page+1}</span>`:""}<button class="bm">${ok(m.id)?"★":"☆"}</button><div class="cb"><h3 class="ct">${tOf(m)}</h3><p class="cs">${m.attributes?.status||"Unknown"} • Ch. ${m.latestChapter?.attributes?.chapter||"?"}</p></div>`;
         c.querySelector(".bm").onclick=e=>{e.stopPropagation();if(ok(m.id)){S.book=S.book.filter(b=>b.id!==m.id);toast("Removed from Library")}else{S.book.unshift({id:m.id,data:m,addedAt:Date.now()});toast("Added to Library")}save();c.querySelector(".bm").textContent=ok(m.id)?"★":"☆"};
         c.onmousemove=e=>{const r=c.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;c.style.transform=`perspective(900px) rotateX(${(0.5-y)*15}deg) rotateY(${(x-0.5)*15}deg) scale(1.05)`};c.onmouseleave=()=>c.style.transform="";c.onclick=()=>openDetail(m);if(row)c.style.minWidth="164px";return c}
