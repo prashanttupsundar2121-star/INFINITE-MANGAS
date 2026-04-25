@@ -15,7 +15,9 @@ app.get("/", (req, res) => {
 app.get("/proxy/*", (req, res) => {
   // Build the MangaDex URL
   const mdPath = req.path.replace("/proxy", "");
-  const query = req.originalUrl.split("?")[1] || "";
+  const rawQuery = req.originalUrl.split("?")[1] || "";
+  // MangaDex needs literal brackets, not %5B%5D
+  const query = rawQuery.replace(/%5B/gi, "[").replace(/%5D/gi, "]");
   const mdUrl = `https://api.mangadex.org${mdPath}${query ? "?" + query : ""}`;
 
   const options = {
