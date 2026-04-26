@@ -108,12 +108,15 @@ function toFeedChapter(ch) {
 
 function requestJson(url, headers = {}) {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const req = https.get(url, { headers: { "User-Agent": "InfiniteMangas/2.0", Accept: "application/json", ...headers } }, (res) => {
       let body = "";
       res.on("data", (chunk) => {
         body += chunk;
       });
       res.on("end", () => {
+        if (settled) return;
+        settled = true;
         if (res.statusCode < 200 || res.statusCode >= 300) {
           return reject(new Error(`HTTP ${res.statusCode}`));
         }
@@ -124,8 +127,17 @@ function requestJson(url, headers = {}) {
         }
       });
     });
-    req.on("error", reject);
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error("Request timed out")));
+    req.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy();
+      if (settled) return;
+      settled = true;
+      reject(new Error("Request timed out"));
+    });
   });
 }
 
