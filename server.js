@@ -1,16 +1,27 @@
 const express = require("express");
 const https = require("https");
 const path = require("path");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const COMICK_BASE = "https://api.comick.fun";
+const REQUEST_TIMEOUT_MS = 12000;
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 50;
+const INDEX_HTML = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
 
-app.use(express.static(__dirname));
+function escapeSvgText(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 function makeSvgDataUrl(title, subtitle, w = 900, h = 1300) {
-  const safeTitle = String(title || "").slice(0, 64).replace(/[<>&"]/g, "");
-  const safeSubtitle = String(subtitle || "").slice(0, 96).replace(/[<>&"]/g, "");
+  const safeTitle = escapeSvgText(title).slice(0, 64);
+  const safeSubtitle = escapeSvgText(subtitle).slice(0, 96);
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'><defs><linearGradient id='g' x1='0' x2='1' y1='0' y2='1'><stop offset='0%' stop-color='#0f1020'/><stop offset='100%' stop-color='#2d1e3f'/></linearGradient></defs><rect width='100%' height='100%' fill='url(#g)'/><rect x='30' y='30' width='${w - 60}' height='${h - 60}' rx='26' fill='none' stroke='rgba(255,255,255,.18)'/><text x='50%' y='42%' text-anchor='middle' fill='#ffffff' font-family='Segoe UI,Arial,sans-serif' font-size='58' font-weight='700'>${safeTitle}</text><text x='50%' y='50%' text-anchor='middle' fill='#ffd166' font-family='Segoe UI,Arial,sans-serif' font-size='34'>${safeSubtitle}</text><text x='50%' y='90%' text-anchor='middle' fill='rgba(255,255,255,.65)' font-family='Segoe UI,Arial,sans-serif' font-size='24'>INFINITE MANGAS READER</text></svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
@@ -114,7 +125,7 @@ function requestJson(url, headers = {}) {
       });
     });
     req.on("error", reject);
-    req.setTimeout(12000, () => req.destroy(new Error("Request timed out")));
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error("Request timed out")));
   });
 }
 
@@ -240,12 +251,12 @@ function listDemoManga(q) {
       list.sort((a, b) => (mode === "asc" ? a.rating - b.rating : b.rating - a.rating));
     }
   }
-  const limit = Math.min(Number(q.limit) || 20, 50);
+  const limit = Math.min(Number(q.limit) || DEFAULT_LIMIT, MAX_LIMIT);
   return list.slice(0, limit).map(toMangaCard);
 }
 
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
+  res.type("html").send(INDEX_HTML);
 });
 
 app.get("/api/manga/tag", (req, res) => {
@@ -254,7 +265,7 @@ app.get("/api/manga/tag", (req, res) => {
 });
 
 app.get("/api/manga", async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 20, 50);
+  const limit = Math.min(Number(req.query.limit) || DEFAULT_LIMIT, MAX_LIMIT);
   const title = String(req.query.title || "");
   try {
     const data = await comickSearch(title, limit);
