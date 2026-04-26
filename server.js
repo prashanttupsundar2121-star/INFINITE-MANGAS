@@ -133,9 +133,9 @@ function requestJson(url, headers = {}) {
       reject(err);
     });
     req.setTimeout(REQUEST_TIMEOUT_MS, () => {
-      req.destroy();
       if (settled) return;
       settled = true;
+      req.destroy();
       reject(new Error("Request timed out"));
     });
   });
@@ -297,7 +297,7 @@ app.get("/api/manga/:id", async (req, res) => {
     const data = await fetchComickDetail(id);
     return res.json({ data, source: "comick" });
   } catch (err) {
-    console.warn(`Comick detail failed for ${id}, using fallback:`, err.message);
+    console.warn("Comick detail failed, using fallback:", { mangaId: id, error: err.message });
   }
   const m = DEMO_BY_ID.get(id);
   if (!m) return res.status(404).json({ error: "Manga not found" });
@@ -316,7 +316,7 @@ app.get("/api/manga/:id/feed", async (req, res) => {
       return res.json({ data, total: data.length, source: "comick" });
     }
   } catch (err) {
-    console.warn(`Comick feed failed for ${id}, using fallback:`, err.message);
+    console.warn("Comick feed failed, using fallback:", { mangaId: id, error: err.message });
   }
   const m = DEMO_BY_ID.get(id);
   if (!m) return res.status(404).json({ error: "Feed not found" });
@@ -332,7 +332,7 @@ app.get("/api/at-home/server/:chapterId", async (req, res) => {
       return res.json({ chapter: { pages }, source: "comick" });
     }
   } catch (err) {
-    console.warn(`Comick chapter pages failed for ${chapterId}, using fallback:`, err.message);
+    console.warn("Comick chapter pages failed, using fallback:", { chapterId, error: err.message });
   }
   const c = DEMO_BY_CHAPTER.get(chapterId);
   if (!c) return res.status(404).json({ error: "Chapter not found" });
