@@ -284,7 +284,9 @@ app.get("/api/manga", async (req, res) => {
     if (data.length) {
       return res.json({ data, total: data.length, source: "comick" });
     }
-  } catch (_err) {}
+  } catch (err) {
+    console.warn("Comick search failed, using fallback:", err.message);
+  }
   const fallback = listDemoManga(req.query);
   res.json({ data: fallback, total: fallback.length, source: "fallback" });
 });
@@ -294,7 +296,9 @@ app.get("/api/manga/:id", async (req, res) => {
   try {
     const data = await fetchComickDetail(id);
     return res.json({ data, source: "comick" });
-  } catch (_err) {}
+  } catch (err) {
+    console.warn(`Comick detail failed for ${id}, using fallback:`, err.message);
+  }
   const m = DEMO_BY_ID.get(id);
   if (!m) return res.status(404).json({ error: "Manga not found" });
   res.json({ data: toMangaDetail(m), source: "fallback" });
@@ -311,7 +315,9 @@ app.get("/api/manga/:id/feed", async (req, res) => {
     if (data.length) {
       return res.json({ data, total: data.length, source: "comick" });
     }
-  } catch (_err) {}
+  } catch (err) {
+    console.warn(`Comick feed failed for ${id}, using fallback:`, err.message);
+  }
   const m = DEMO_BY_ID.get(id);
   if (!m) return res.status(404).json({ error: "Feed not found" });
   const data = m.chapters.map(toFeedChapter);
@@ -325,7 +331,9 @@ app.get("/api/at-home/server/:chapterId", async (req, res) => {
     if (pages.length) {
       return res.json({ chapter: { pages }, source: "comick" });
     }
-  } catch (_err) {}
+  } catch (err) {
+    console.warn(`Comick chapter pages failed for ${chapterId}, using fallback:`, err.message);
+  }
   const c = DEMO_BY_CHAPTER.get(chapterId);
   if (!c) return res.status(404).json({ error: "Chapter not found" });
   res.json({ chapter: { pages: c.chapter.pages }, source: "fallback" });
